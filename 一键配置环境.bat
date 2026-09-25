@@ -40,13 +40,19 @@ if errorlevel 1 (
   exit /b 1
 )
 
-rem --- 4. 校验 ffmpeg 与关键库 ---
+rem --- 4. 校验 ffmpeg（缺失则自动下载补齐）与关键库 ---
 echo [4/4] 校验运行时...
-if exist "tools\ffmpeg\bin\ffmpeg.exe" (
-  echo   已就位：tools\ffmpeg\bin/ffmpeg.exe（出片工具链，随包提供）
-) else (
-  echo   [警告] 未找到 tools\ffmpeg\bin\ffmpeg.exe —— 真实出片将不可用，请确认解压完整
-)
+if exist "tools\ffmpeg\bin\ffmpeg.exe" goto ffmpeg_ready
+echo   未找到 ffmpeg（源码仓库不含该大二进制），尝试自动下载补齐（约 80MB，需联网）...
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\fetch_ffmpeg.ps1"
+if not errorlevel 1 goto ffmpeg_ready
+echo   [警告] ffmpeg 自动下载未成功。真实出片需要 ffmpeg，可任选其一：
+echo     方式一：使用随附完整交付包 AI视频剪辑智能体-源码.zip（内含 tools\ffmpeg\bin\）
+echo     方式二：手动下载 Windows 静态构建，把 ffmpeg.exe / ffprobe.exe 放入 tools\ffmpeg\bin\
+goto ffmpeg_done
+:ffmpeg_ready
+echo   已就位：tools\ffmpeg\bin\ffmpeg.exe（出片工具链）
+:ffmpeg_done
 .venv\Scripts\python.exe -c "import gradio, numpy, cv2; print('   关键库导入 OK (gradio / numpy / opencv)')"
 
 echo.
