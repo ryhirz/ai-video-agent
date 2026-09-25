@@ -11,6 +11,9 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
+# 测试运行时缓存（素材由测试/工具生成，非源码）
+tests/.cache/
+
 # 虚拟环境
 .venv/
 venv/
