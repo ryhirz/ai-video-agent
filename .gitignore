@@ -1,0 +1,32 @@
+# 渲染产物（每次点击④应用并编译生成，不入库）
+outputs/
+
+# 验收脚本的中间产物（_verify/*.py 脚本本身入库，素材与结果不入库）
+_verify/*.mp4
+_verify/*.json
+_verify/*_out/
+
+# Python 缓存
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 虚拟环境
+.venv/
+venv/
+
+# 大二进制不入库（GitHub 单文件 100MB 硬限制）；克隆后由"一键配置环境.bat"自动下载
+tools/ffmpeg/
+
+# 测试素材大视频（非源码）
+测试素材*.mp4
+
+# 模型权重（运行时由 ultralytics 自动下载 yolov8n.pt）
+weights/
+*.pt
+
+# 打包/交付产物（本地生成，不入库）
+*.zip
+
+# 本地临时日志
+_verify/_qwen_server.log

@@ -1,0 +1,13 @@
+﻿
+ProcessId Name       CreationDate      CommandLine                             
+--------- ----       ------------      -----------                             
+     4136 python.exe 2026/9/24 2:04:10 ".venv\Scripts\python.exe"  -m ai_vid...
+
+
+
+ProcessId CreationDate     
+--------- ------------     
+    24588 2026/9/24 2:04:10
+     4136 2026/9/24 2:04:10
+
+
