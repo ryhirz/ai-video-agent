@@ -8,7 +8,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 依赖含 opencv-python / gradio，装包本身就要几分钟，再跑 163 个用例，
+    # 20 分钟余量不足（首跑即因超时被强杀），放宽到 30 分钟。
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
@@ -16,13 +18,28 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
 
       # 项目源码不含 ffmpeg 二进制（tools/ffmpeg/bin 被 .gitignore 排除），
       # 但 ingest.py / render.py 均提供"系统 PATH"兜底，故此处安装系统版即可。
+      # 已核对 actions/runner-images 中 ubuntu-24.04 的软件清单：未预装 ffmpeg，必须装。
+      #
+      # ⚠️ 首跑失败原因（卡死 20 分钟被平台强杀）：
+      #   hosted runner 上 apt-daily / unattended-upgrades 会长时间持有 dpkg 锁，
+      #   而 apt 等待锁的默认行为是「无限期等待」，表现为这一步静默卡住。
+      #   两道保险：① 先停掉持锁的后台任务；② 用 DPkg::Lock::Timeout 给等待设上限。
+      # 另外刻意不用 --no-install-recommends：libavcodec-extra 属 Recommends，
+      #   它才带来 libx264 等编码器，测试用 lavfi 合成素材并编码，依赖它。
       - name: 安装 ffmpeg
+        timeout-minutes: 8
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          set -euo pipefail
+          sudo systemctl stop apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service 2>/dev/null || true
+          sudo systemctl stop unattended-upgrades 2>/dev/null || true
+          export DEBIAN_FRONTEND=noninteractive
+          APT_OPTS="-o DPkg::Lock::Timeout=180 -o Acquire::Retries=3 -o Acquire::http::Timeout=30"
+          sudo -E apt-get $APT_OPTS update -qq
+          sudo -E apt-get $APT_OPTS install -y ffmpeg
           ffmpeg -version | head -1
           ffprobe -version | head -1
 
