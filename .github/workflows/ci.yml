@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # 项目源码不含 ffmpeg 二进制（tools/ffmpeg/bin 被 .gitignore 排除），
+      # 但 ingest.py / render.py 均提供"系统 PATH"兜底，故此处安装系统版即可。
+      - name: 安装 ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          ffmpeg -version | head -1
+          ffprobe -version | head -1
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      # 测试自建素材（tmp 目录 + ffmpeg lavfi 合成），不依赖仓库内的示例视频
+      - name: 运行单元测试
+        run: python -m pytest -q
