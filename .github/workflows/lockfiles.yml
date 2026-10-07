@@ -1,0 +1,73 @@
+# 依赖锁文件自动维护（pip-compile）
+# ============================================================================
+# requirements.in / requirements-full.in = 人写的抽象规格
+# requirements.txt / requirements-full.txt = 机器编译的锁文件（钉死版本 + sha256 哈希）
+#
+# 锁文件保证「今天装、半年后装、别人装」都是同一批字节。
+# 必须在 Ubuntu 上编译：pip-compile 解析的是当前平台的依赖图，
+# 生成环境必须与 CI 消费环境（ubuntu-latest + Python 3.11）一致。
+#
+# --strip-extras 说明：--require-hashes 要求每个被安装的包都带哈希出现在文件里；
+# 若保留 uvicorn[standard] 这类 extras 写法，pip 会去装 extras 依赖却发现没钉住而报错。
+# --strip-extras 把 extras 摊平成独立钉死行，效果等价且满足哈希模式。
+#
+# requirements-full.txt 含 torch / ultralytics / funasr，依赖树很大，
+# 因此单独给这一步更长的超时；它不参与 CI 主流程（CI 只装 requirements.txt）。
+#
+# 触发：Actions 页面手动 Run workflow，或每周一自动刷新。
+# ============================================================================
+name: Lockfiles
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * 1" # 每周一 02:00 UTC（北京时间 10:00）自动刷新
+
+permissions:
+  contents: write
+
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11" # 必须与 ci.yml 的 python-version 一致
+
+      - name: 安装 pip-tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-tools
+          pip-compile --version
+
+      - name: 编译 requirements.txt（基础依赖，CI 消费）
+        run: |
+          set -euo pipefail
+          pip-compile --generate-hashes --strip-extras \
+            --output-file requirements.txt requirements.in
+          echo "----- 产物概览 -----"
+          grep -c -- '--hash=' requirements.txt | sed 's/^/带哈希的依赖行数: /'
+
+      - name: 编译 requirements-full.txt（含 AI 模型依赖）
+        timeout-minutes: 25
+        run: |
+          set -euo pipefail
+          pip-compile --generate-hashes --strip-extras \
+            --output-file requirements-full.txt requirements-full.in
+          echo "----- 产物概览 -----"
+          grep -c -- '--hash=' requirements-full.txt | sed 's/^/带哈希的依赖行数: /'
+
+      - name: 有变化才提交
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "锁文件无变化，跳过提交"
+          else
+            git commit -m "chore(deps): 刷新 pip-compile 锁文件"
+            git push
+          fi
