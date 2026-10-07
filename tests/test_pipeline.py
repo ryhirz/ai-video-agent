@@ -11,9 +11,10 @@ import subprocess
 from ai_video_agent.ingest import build_footage_index, build_initial_timeline
 from ai_video_agent.operations import apply_operation
 from ai_video_agent.compiler import compile
+from ai_video_agent.render import resolve_ffmpeg
 
-HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FF = os.path.join(HERE, "tools", "ffmpeg", "bin", "ffmpeg.exe")
+# 同 test_ingest.py：复用生产代码的 ffmpeg 解析器，避免测试硬编码 Windows 专用的 .exe 路径。
+FF = resolve_ffmpeg() or "ffmpeg"
 
 
 def _make_clip(path: str, dur: float = 4.0) -> None:

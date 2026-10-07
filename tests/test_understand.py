@@ -11,6 +11,8 @@ import tempfile
 import unittest
 import subprocess
 
+from ai_video_agent.render import resolve_ffmpeg
+
 # 优雅降级守卫：YOLO 真实检测需要 ultralytics + torch（完整依赖）。
 # 只装了基础依赖（gradio/numpy/opencv）的机器上，这两类测试应跳过而非 ERROR，
 # 这样「一键测试」在轻量环境下也能干净跑过（其余 29 个纯逻辑测试不受影响）。
@@ -23,14 +25,18 @@ except Exception:  # pragma: no cover - 仅在缺依赖时命中
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE = os.path.join(HERE, "tests", ".cache")
 BUS_JPG = os.path.join(CACHE, "bus.jpg")
-FF = os.path.join(HERE, "tools", "ffmpeg", "bin", "ffmpeg.exe")
+# 同 test_ingest.py：复用生产代码的 ffmpeg 解析器，避免硬编码 Windows 专用的 .exe 路径。
+FF = resolve_ffmpeg() or "ffmpeg"
 BUS_URL = "https://raw.githubusercontent.com/ultralytics/ultralytics/main/ultralytics/assets/bus.jpg"
 
 
 def _ensure_bus_jpg() -> str:
     os.makedirs(CACHE, exist_ok=True)
     if not os.path.exists(BUS_JPG):
-        subprocess.run(["curl", "-L", "--max-time", 120, "-o", BUS_JPG, BUS_URL],
+        # --max-time 必须是字符串：原写作 int 120，POSIX 下 subprocess 会抛
+        # TypeError: expected str, bytes or os.PathLike object, not int。
+        # 本地因 .cache/bus.jpg 已存在而从未执行到这行，CI 干净检出才暴露。
+        subprocess.run(["curl", "-L", "--max-time", "120", "-o", BUS_JPG, BUS_URL],
                        capture_output=True, text=True, check=True)
     return BUS_JPG
 

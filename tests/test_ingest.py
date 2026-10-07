@@ -6,9 +6,12 @@ import subprocess
 
 from ai_video_agent.footage_index import FootageIndex
 from ai_video_agent.ingest import probe, build_footage_index, build_initial_timeline
+from ai_video_agent.render import resolve_ffmpeg
 
-HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FF = os.path.join(HERE, "tools", "ffmpeg", "bin", "ffmpeg.exe")
+# ffmpeg 定位复用生产代码的解析器：FFMPEG_BIN → 项目自带 tools/ffmpeg/bin/ffmpeg(.exe) → 系统 PATH。
+# 原先此处硬编码 ".../tools/ffmpeg/bin/ffmpeg.exe"，该文件在 Linux(CI) 上不存在，
+# 会导致整个用例类在 setUp 阶段就 FileNotFoundError —— 属测试自带的 Windows-only 假设。
+FF = resolve_ffmpeg() or "ffmpeg"
 
 
 def _make_test_clip(path: str, dur: float = 4.0) -> None:
