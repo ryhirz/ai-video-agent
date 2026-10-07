@@ -43,11 +43,15 @@ jobs:
           ffmpeg -version | head -1
           ffprobe -version | head -1
 
-      - name: 安装依赖
+      # 从锁文件安装，强制校验每个包的 sha256。
+      # 锁文件由 .github/workflows/lockfiles.yml 在同样的 Ubuntu + Python 3.11 上生成，
+      # 所有传递依赖都被钉死版本 + 哈希 → 不会再出现「本地好好的、CI 全新安装
+      # 装到不兼容的新大版本就挂」（同机的 rz-home 项目就被 bcrypt 坑过一次）。
+      # 测试依赖 pytest 已包含在锁文件内，无需单独安装。
+      - name: 安装依赖（从锁文件，强制校验哈希）
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest
+          pip install --require-hashes -r requirements.txt
 
       # 测试自建素材（tmp 目录 + ffmpeg lavfi 合成），不依赖仓库内的示例视频
       - name: 运行单元测试
