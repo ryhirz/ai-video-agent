@@ -1,5 +1,10 @@
 # AI 视频剪辑智能体
 
+[![CI](https://github.com/ryhirz/ai-video-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/ryhirz/ai-video-agent/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![ffmpeg](https://img.shields.io/badge/ffmpeg-6.x-007808?logo=ffmpeg&logoColor=white)](https://ffmpeg.org/)
+[![Gradio](https://img.shields.io/badge/Gradio-UI-FF7A00?logo=gradio&logoColor=white)](https://gradio.app/)
+
 > 用自然语言指挥视频剪辑：从**素材理解 → 操作规划 → 事实校验 → 真实出片**的全链路本地智能体。
 
 输入一句话，例如「删掉有公交车的片段」「把字幕改成竖屏 9:16」，系统自动规划剪辑操作、调用 ffmpeg 出片。
