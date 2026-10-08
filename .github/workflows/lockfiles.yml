@@ -1,4 +1,4 @@
-# 依赖锁文件自动维护（pip-compile）
+# 依赖锁文件维护 + 漂移校验（pip-compile）
 # ============================================================================
 # requirements.in / requirements-full.in = 人写的抽象规格
 # requirements.txt / requirements-full.txt = 机器编译的锁文件（钉死版本 + sha256 哈希）
@@ -14,7 +14,17 @@
 # requirements-full.txt 含 torch / ultralytics / funasr，依赖树很大，
 # 因此单独给这一步更长的超时；它不参与 CI 主流程（CI 只装 requirements.txt）。
 #
-# 触发：Actions 页面手动 Run workflow，或每周一自动刷新。
+# ============================ 两个 job 的分工 ============================
+#   lock   —— 生成并提交锁文件。只在手动触发 / 每周一定时跑。
+#   verify —— 校验漂移：拿规格文件重新编译，和仓库里的锁文件逐字节比，
+#             不一致就失败。在 push / PR 且涉及依赖文件时跑。
+#
+#   为什么要 verify：改了 .in 却忘了刷锁时，CI 仍按「旧锁」安装，
+#   全绿、毫无异常 —— 问题被完美掩盖。等别人按 .in 安装才会撞上
+#   一个 CI 从未测过的依赖组合。verify 把这种静默漂移变成红叉。
+#
+#   ⚠️ 使用姿势：改了 .in 之后 verify 会先红一次（设计如此）。
+#      到 Actions → Lockfiles → Run workflow 刷新锁文件并提交，verify 随即转绿。
 # ============================================================================
 name: Lockfiles
 
@@ -22,12 +32,27 @@ on:
   workflow_dispatch:
   schedule:
     - cron: "0 2 * * 1" # 每周一 02:00 UTC（北京时间 10:00）自动刷新
+  push:
+    paths:
+      - "requirements*.in"
+      - "requirements*.txt"
+      - ".github/workflows/lockfiles.yml"
+  pull_request:
+    paths:
+      - "requirements*.in"
+      - "requirements*.txt"
 
 permissions:
   contents: write
 
+# pip-tools 必须钉住版本：其输出格式会随版本变化，不钉住会让 verify
+# 变成随 pip-tools 升级而随机报警的假探针。
+env:
+  PIP_TOOLS_VERSION: "7.6.2"
+
 jobs:
   lock:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,7 +64,7 @@ jobs:
       - name: 安装 pip-tools
         run: |
           python -m pip install --upgrade pip
-          pip install pip-tools
+          pip install "pip-tools==${PIP_TOOLS_VERSION}"
           pip-compile --version
 
       - name: 编译 requirements.txt（基础依赖，CI 消费）
@@ -70,4 +95,49 @@ jobs:
           else
             git commit -m "chore(deps): 刷新 pip-compile 锁文件"
             git push
+          fi
+
+  verify:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # 只读即可：本 job 不提交任何东西
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11" # 必须与 lock job / ci.yml 一致
+
+      - name: 安装 pip-tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install "pip-tools==${PIP_TOOLS_VERSION}"
+          pip-compile --version
+
+      - name: 漂移校验：requirements.txt
+        run: |
+          set -euo pipefail
+          pip-compile --generate-hashes --strip-extras \
+            --output-file requirements.txt requirements.in
+          if git diff --exit-code -- requirements.txt; then
+            echo "✅ requirements.txt 与 requirements.in 同步"
+          else
+            echo "::error::锁文件已漂移：requirements.txt 与 requirements.in 不同步。"
+            echo "::error::修复：到 Actions → Lockfiles → Run workflow 刷新锁文件后提交。"
+            exit 1
+          fi
+
+      - name: 漂移校验：requirements-full.txt
+        timeout-minutes: 25
+        run: |
+          set -euo pipefail
+          pip-compile --generate-hashes --strip-extras \
+            --output-file requirements-full.txt requirements-full.in
+          if git diff --exit-code -- requirements-full.txt; then
+            echo "✅ requirements-full.txt 与 requirements-full.in 同步"
+          else
+            echo "::error::锁文件已漂移：requirements-full.txt 与 requirements-full.in 不同步。"
+            echo "::error::修复：到 Actions → Lockfiles → Run workflow 刷新锁文件后提交。"
+            exit 1
           fi
