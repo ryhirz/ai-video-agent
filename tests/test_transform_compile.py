@@ -123,5 +123,51 @@ class TestValidation(unittest.TestCase):
         self.assertEqual(m["rotation"]["default"], 0)
 
 
+class TestManifestHonesty(unittest.TestCase):
+    """隐患 A：清单只承诺编译器真能落地的能力（T1 防漂移红线）。
+
+    背景：TRANSFORM_PARAMS 里有 scale、x/y 又允许负值，但实现不落地 scale、
+    pad 也不接受负值 —— 若不收口，manifest 就在"说谎"。
+    """
+
+    def test_scale_marked_planned(self) -> None:
+        m = registry.capability_manifest()["transform"]
+        self.assertFalse(m["scale"]["supported"],
+                         "transform.scale 尚未落地，manifest 必须标 supported=false")
+
+    def test_implemented_params_marked_supported(self) -> None:
+        m = registry.capability_manifest()["transform"]
+        for name in ("x", "y", "rotation", "opacity"):
+            self.assertTrue(m[name]["supported"], name)
+
+    def test_xy_range_excludes_negative(self) -> None:
+        m = registry.capability_manifest()["transform"]
+        for name in ("x", "y"):
+            self.assertEqual(m[name]["min"], 0,
+                             f"{name} 下限必须为 0（pad 不支持负偏移）")
+
+    def test_scale_non_default_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            _vf(scale=2.0)
+
+    def test_scale_default_passes(self) -> None:
+        self.assertNotIn("pad=", _vf(scale=1.0))
+
+    def test_every_supported_param_compiles(self) -> None:
+        """supported=true 的参数必须真的进 filtergraph（清单承诺 = 实现）。"""
+        probes = {"x": {"x": 5}, "y": {"y": 5},
+                  "rotation": {"rotation": 0.5}, "opacity": {"opacity": 0.5}}
+        m = registry.capability_manifest()["transform"]
+        for name, kw in probes.items():
+            if m[name]["supported"]:
+                self.assertTrue(_vf(**kw), f"supported 参数 {name} 未落入 filtergraph")
+
+    def test_xy_description_states_crop_semantics(self) -> None:
+        """隐患 B：清单必须写明 x/y 是"画布内偏移 + 裁边"，不是无损平移。"""
+        m = registry.capability_manifest()["transform"]
+        for name in ("x", "y"):
+            self.assertIn("裁边", m[name]["description"])
+
+
 if __name__ == "__main__":
     unittest.main()

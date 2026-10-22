@@ -98,6 +98,8 @@ def transform_geometry_filters(clip: Clip, out_w: int, out_h: int) -> List[str]:
     filters: List[str] = []
     x, y = float(tf.x), float(tf.y)
     if x != 0 or y != 0:
+        # 兜底：registry 的 min=0 已在 validate_transform 阶段拦下负值；
+        # 这里再挡一次，避免绕过校验直接调用时把非法值交给 ffmpeg。
         if x < 0 or y < 0:
             raise ValueError(
                 f"transform.x/y 不支持负值（ffmpeg pad 限制）：x={x:g}, y={y:g}")

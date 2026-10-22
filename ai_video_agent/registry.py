@@ -23,13 +23,19 @@ MANIFEST_VERSION = "1.0.0"
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class ParamSpec:
-    """一个参数的合法域。数值型 default 必须落在 [min, max] 内。"""
+    """一个参数的合法域。数值型 default 必须落在 [min, max] 内。
+
+    supported=False 表示：契约里有这个字段，但**编译器尚未落地**。
+    这类参数不会出现在对 planner 的有效能力承诺里；显式设非默认值时直接报错，
+    而不是静默忽略 —— 否则就是"清单说有、编译器不认"的翻版。
+    """
 
     default: Any = None
     min: Optional[float] = None
     max: Optional[float] = None
     description: str = ""
     type: str = "number"          # number | string（rotation 允许含 t 的表达式）
+    supported: bool = True
 
     def to_dict(self) -> Dict[str, Any]:
         d: Dict[str, Any] = {}
@@ -42,6 +48,7 @@ class ParamSpec:
         if self.description:
             d["description"] = self.description
         d["type"] = self.type
+        d["supported"] = self.supported
         return d
 
 
@@ -71,12 +78,20 @@ TRANSITION_TYPES: Tuple[str, ...] = ("fade", "cross", "wipe")
 # transform（几何 / 透明度）：compiler 映射为 pad / rotate / colorchannelmixer
 # ---------------------------------------------------------------------------
 TRANSFORM_PARAMS: Dict[str, ParamSpec] = {
-    "x": ParamSpec(0, None, None, "水平偏移像素（pad 的 x；ffmpeg pad 不支持负值）", "number"),
-    "y": ParamSpec(0, None, None, "垂直偏移像素（pad 的 y；ffmpeg pad 不支持负值）", "number"),
-    "scale": ParamSpec(1.0, None, None, "缩放倍数（1.0 = 原始尺寸）", "number"),
+    # x/y 语义 = 等尺寸画布内偏移：x>0 画面右移、右侧超出部分被裁、左侧补黑。
+    # 不是"整体平移且内容不丢"；负值不支持（ffmpeg pad 限制），待 crop 路径补齐再放开。
+    "x": ParamSpec(0, 0, None,
+                   "水平偏移像素（等尺寸画布内偏移，超出裁边；不可为负）", "number"),
+    "y": ParamSpec(0, 0, None,
+                   "垂直偏移像素（等尺寸画布内偏移，超出裁边；不可为负）", "number"),
     "rotation": ParamSpec(0, None, None,
                           "旋转弧度（rad）；可传数值，或含 t 的表达式", "number"),
     "opacity": ParamSpec(1.0, 0.0, 1.0, "画面透明度", "number"),
+    # 契约 §1.3 有 scale，但当前由输出归一化 scale=W:H 接管，暂不叠加；
+    # supported=False => 清单不承诺，显式设非默认值会被校验拒绝。
+    "scale": ParamSpec(1.0, None, None,
+                       "缩放倍数（planned：当前由输出归一化接管，尚未编译落地）",
+                       "number", supported=False),
 }
 
 
@@ -90,6 +105,11 @@ def validate_transform(values: Dict[str, Any]) -> List[str]:
     v = values or {}
     for name, spec in TRANSFORM_PARAMS.items():
         raw = v.get(name, spec.default)
+        # planned（未落地）参数：默认值放行，显式设非默认值直接拒绝
+        if not spec.supported and raw != spec.default:
+            errs.append(
+                f"transform.{name}={raw} 尚未编译落地（planned），请暂不使用")
+            continue
         if name == "rotation" and isinstance(raw, str):
             s = raw.strip()
             if not s:

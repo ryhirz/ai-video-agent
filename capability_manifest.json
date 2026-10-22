@@ -19,30 +19,37 @@
   "transform": {
     "x": {
       "default": 0,
-      "description": "水平偏移像素（pad 的 x；ffmpeg pad 不支持负值）",
-      "type": "number"
+      "min": 0,
+      "description": "水平偏移像素（等尺寸画布内偏移，超出裁边；不可为负）",
+      "type": "number",
+      "supported": true
     },
     "y": {
       "default": 0,
-      "description": "垂直偏移像素（pad 的 y；ffmpeg pad 不支持负值）",
-      "type": "number"
-    },
-    "scale": {
-      "default": 1.0,
-      "description": "缩放倍数（1.0 = 原始尺寸）",
-      "type": "number"
+      "min": 0,
+      "description": "垂直偏移像素（等尺寸画布内偏移，超出裁边；不可为负）",
+      "type": "number",
+      "supported": true
     },
     "rotation": {
       "default": 0,
       "description": "旋转弧度（rad）；可传数值，或含 t 的表达式",
-      "type": "number"
+      "type": "number",
+      "supported": true
     },
     "opacity": {
       "default": 1.0,
       "min": 0.0,
       "max": 1.0,
       "description": "画面透明度",
-      "type": "number"
+      "type": "number",
+      "supported": true
+    },
+    "scale": {
+      "default": 1.0,
+      "description": "缩放倍数（planned：当前由输出归一化接管，尚未编译落地）",
+      "type": "number",
+      "supported": false
     }
   },
   "effects": {
@@ -95,7 +102,8 @@
             "default": 5,
             "min": 0,
             "max": 50,
-            "type": "number"
+            "type": "number",
+            "supported": true
           }
         }
       },
@@ -110,7 +118,8 @@
             "default": 0.1,
             "min": -1,
             "max": 1,
-            "type": "number"
+            "type": "number",
+            "supported": true
           }
         }
       },
@@ -125,7 +134,8 @@
             "default": 1.5,
             "min": 0,
             "max": 2,
-            "type": "number"
+            "type": "number",
+            "supported": true
           }
         }
       },
@@ -140,7 +150,8 @@
             "default": 1.5,
             "min": 0,
             "max": 2,
-            "type": "number"
+            "type": "number",
+            "supported": true
           }
         }
       },
@@ -153,7 +164,8 @@
           "duration": {
             "min": 0,
             "max": 60,
-            "type": "number"
+            "type": "number",
+            "supported": true
           }
         }
       },
@@ -166,7 +178,8 @@
           "duration": {
             "min": 0,
             "max": 60,
-            "type": "number"
+            "type": "number",
+            "supported": true
           }
         }
       }
@@ -183,7 +196,8 @@
             "default": 1.0,
             "min": 0,
             "max": 2,
-            "type": "number"
+            "type": "number",
+            "supported": true
           }
         }
       },
@@ -196,7 +210,8 @@
           "duration": {
             "min": 0,
             "max": 60,
-            "type": "number"
+            "type": "number",
+            "supported": true
           }
         }
       },
@@ -209,7 +224,8 @@
           "duration": {
             "min": 0,
             "max": 60,
-            "type": "number"
+            "type": "number",
+            "supported": true
           }
         }
       }
