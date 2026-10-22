@@ -3,7 +3,7 @@
 对应规格书 §3。compile(timeline) 只读 timeline，产出 filter_complex 命令。
 同输入必得同输出；节点命名带 clipId，出错可反查具体操作。
 
-覆盖范围（2026-10-22 补齐）：契约里的 10 类操作**全部**会体现在成片里——
+覆盖范围（2026-10-22 补齐）：契约里的 11 类操作**全部**会体现在成片里——
     cut / trim / delete_clip / delete_range  -> 影响参与拼接的片段区间
     move_clip                                -> 影响片段顺序（重排语义）
     add_subtitle                             -> ASS 叠加（支持 font/size/color/bg 覆盖）
@@ -11,8 +11,9 @@
     transition                               -> 片段边界 xfade / acrossfade 交叉溶解
     add_bgm                                  -> 与主音频 amix 混音
     speed                                    -> 视频 setpts + 音频 atempo 同步变速
+    add_text                                 -> 文字水印/标题（drawtext，九宫格 + margin）
 非操作类补充：
-    transform（x/y/rotation/opacity）        -> pad / rotate / colorchannelmixer
+    transform（x/y/rotation/opacity/crop）   -> pad / rotate / colorchannelmixer / crop
     组间 gap                                  -> 视频 tpad 黑帧 + 音频 anullsrc 等长静音
 **未知效果不会被静默忽略**：识别不了的写进返回值的 `unsupported`，由上层回显给用户。
 """
@@ -120,8 +121,10 @@ def _crop_expr(v: float, axis: str) -> str:
 def crop_filter(crop: Optional[Dict[str, float]]) -> Optional[str]:
     """transform.crop -> crop 滤镜串（源坐标系，放在 scale 之前）。
 
-    - `w`/`h` 必填；`0 < v < 1` 视为占比（`iw*0.8`），否则按源像素。
-    - `x`/`y` 可省略：省略时交给 ffmpeg 的默认居中裁剪。
+    - `w`/`h` 必填；`0 < v <= 1` 视为占比（`iw*0.8`），否则按源像素。
+    - `x`/`y` **可以只传一个**：缺的那个用 ffmpeg 默认居中表达式
+      （`(iw-ow)/2` / `(ih-oh)/2`）。注意这与 drawtext 的策略不同 ——
+      drawtext 的 x/y 是"覆盖九宫格锚点"，必须成对才有意义。
     """
     if not crop:
         return None
@@ -332,7 +335,11 @@ _POSITION_EXPR: Dict[str, Tuple[str, str]] = {
 
 def drawtext_filter(t: TextOverlay,
                     unsupported: Optional[List[str]] = None) -> str:
-    """TextOverlay -> drawtext 滤镜串。"""
+    """TextOverlay -> drawtext 滤镜串。
+
+    `x`/`y` 必须**同时非空**才覆盖九宫格锚点：只给一个会让另一半仍是锚点表达式，
+    语义混乱。这一点与 crop 的"x/y 可单边"不同，是两套 API 各自的约束。
+    """
     m = _fmt_num(t.margin)
     if t.x is not None and t.y is not None:
         x_expr, y_expr = _fmt_num(t.x), _fmt_num(t.y)
