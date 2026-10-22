@@ -493,6 +493,8 @@ class JsonPlanner:
         "\"invert\"/\"mirror\"/\"fade_in\"/\"fade_out\""
         "（配 params 如 {\"value\":0.2}、{\"radius\":5}、{\"duration\":1.0}）；"
         "音轨上可用 \"volume\"/\"fade_in\"/\"fade_out\"\n"
+        "- speed: {targetClipId, rate}     变速（视频与配对音频同步；"
+        "1.0=原速、2.0=二倍速、0.5=半速；范围 0.01~1000）\n"
         "\n"
         "【铁律：违反会被拒绝执行】\n"
         "1. targetClipId 只能取『当前 Timeline』里列出的 id，绝不能臆造或凭记忆写。\n"

@@ -313,7 +313,7 @@ def capability_manifest() -> Dict[str, Any]:
             "video": {s.canonical: s.to_dict() for s in VIDEO_EFFECT_SPECS.values()},
             "audio": {s.canonical: s.to_dict() for s in AUDIO_EFFECT_SPECS.values()},
         },
-        "internal_markers": [BGM_MARKER],
+        "internal_markers": [BGM_MARKER, SPEED_MARKER],
     }
 
 

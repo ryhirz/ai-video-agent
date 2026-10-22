@@ -3,13 +3,17 @@
 对应规格书 §3。compile(timeline) 只读 timeline，产出 filter_complex 命令。
 同输入必得同输出；节点命名带 clipId，出错可反查具体操作。
 
-覆盖范围（2026-09-23 补齐）：契约里的 9 类操作**全部**会体现在成片里——
+覆盖范围（2026-10-22 补齐）：契约里的 10 类操作**全部**会体现在成片里——
     cut / trim / delete_clip / delete_range  -> 影响参与拼接的片段区间
     move_clip                                -> 影响片段顺序（重排语义）
-    add_subtitle                             -> ASS 叠加
+    add_subtitle                             -> ASS 叠加（支持 font/size/color/bg 覆盖）
     effect                                   -> 逐片段画面/音频滤镜
-    transition                               -> 片段边界的淡出/淡入
+    transition                               -> 片段边界 xfade / acrossfade 交叉溶解
     add_bgm                                  -> 与主音频 amix 混音
+    speed                                    -> 视频 setpts + 音频 atempo 同步变速
+非操作类补充：
+    transform（x/y/rotation/opacity）        -> pad / rotate / colorchannelmixer
+    组间 gap                                  -> 视频 tpad 黑帧 + 音频 anullsrc 等长静音
 **未知效果不会被静默忽略**：识别不了的写进返回值的 `unsupported`，由上层回显给用户。
 """
 from __future__ import annotations

@@ -288,6 +288,7 @@
     }
   },
   "internal_markers": [
-    "bgm_mix"
+    "bgm_mix",
+    "speed"
   ]
 }
