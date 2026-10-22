@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import unittest
 
-from ai_video_agent import compiler
+from ai_video_agent import compiler, registry
 from ai_video_agent.timeline import Clip, Metadata, Timeline, Track, Transition
 
 W, H = 640, 360
@@ -119,6 +119,31 @@ class TestChainOffsetAccumulates(unittest.TestCase):
         # 第一对: 4-1=3；累积 4+4-1=7 -> 第二对: 7-1=6
         self.assertIn("offset=3", vf)
         self.assertIn("offset=6", vf)
+
+
+class TestManifestTransitionExported(unittest.TestCase):
+    """清单诚实性（T5）：transition 段必须导出真实使用的 xfade/acrossfade 映射。"""
+
+    def test_manifest_has_transition_specs(self) -> None:
+        tr = registry.capability_manifest()["transition"]
+        self.assertEqual(set(tr), {"fade", "cross", "wipe"})
+        for name, spec in tr.items():
+            self.assertTrue(spec["supported"], name)
+            self.assertIn("xfade=transition=", spec["video"])
+            self.assertIn("acrossfade=c1=", spec["audio"])
+
+    def test_transition_types_still_compatible(self) -> None:
+        self.assertEqual(list(registry.TRANSITION_TYPES), ["fade", "cross", "wipe"])
+
+    def test_manifest_matches_compiled_filters(self) -> None:
+        """manifest 声明的 video/audio 映射，必须与编译器实际产出对得上。"""
+        tr = registry.capability_manifest()["transition"]
+        for name, spec in tr.items():
+            result = compiler.compile(_tl(
+                [_v("a", 0, 4), _v("b", 4, 8), _a("aa", 0, 4), _a("ab", 4, 8)],
+                [Transition("t1", name, 1.0, ["a", "b"])]))
+            self.assertIn(spec["video"], result["video_filter"], name)
+            self.assertIn("c1=tri:c2=tri", result["audio_filter"], name)
 
 
 if __name__ == "__main__":

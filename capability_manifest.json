@@ -16,6 +16,23 @@
     "cross",
     "wipe"
   ],
+  "transition": {
+    "fade": {
+      "video": "xfade=transition=fade",
+      "audio": "acrossfade=c1=tri:c2=tri",
+      "supported": true
+    },
+    "cross": {
+      "video": "xfade=transition=fade",
+      "audio": "acrossfade=c1=tri:c2=tri",
+      "supported": true
+    },
+    "wipe": {
+      "video": "xfade=transition=wiperight",
+      "audio": "acrossfade=c1=tri:c2=tri",
+      "supported": true
+    }
+  },
   "transform": {
     "x": {
       "default": 0,

@@ -71,7 +71,44 @@ OPERATIONS: Dict[str, Dict[str, Any]] = {
                                                            "params"]},
 }
 
-TRANSITION_TYPES: Tuple[str, ...] = ("fade", "cross", "wipe")
+@dataclass(frozen=True)
+class TransitionSpec:
+    """转场规格：视频走 xfade，音频走 acrossfade。
+
+    audio_curve 是 acrossfade 的 c1/c2 **曲线名**（tri/qsin/...），
+    不是 xfade 的 transition 名 —— 两者是两套枚举（踩过这个坑）。
+    """
+
+    name: str
+    video: str          # ffmpeg xfade 的 transition 值
+    audio_curve: str    # ffmpeg acrossfade 的 c1/c2 曲线（tri = 线性）
+    supported: bool = True
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "video": f"xfade=transition={self.video}",
+            "audio": f"acrossfade=c1={self.audio_curve}:c2={self.audio_curve}",
+            "supported": self.supported,
+        }
+
+
+TRANSITION_SPECS: Dict[str, TransitionSpec] = {
+    # cross 与 fade 在 ffmpeg 侧同为交叉淡化；wipe 用 wiperight
+    "fade": TransitionSpec("fade", "fade", "tri"),
+    "cross": TransitionSpec("cross", "fade", "tri"),
+    "wipe": TransitionSpec("wipe", "wiperight", "tri"),
+}
+TRANSITION_TYPES: Tuple[str, ...] = tuple(TRANSITION_SPECS)
+
+
+def resolve_transition(name: str) -> Optional[TransitionSpec]:
+    """按名字取转场规格；`white` 作为历史别名兜底为 fadewhite。"""
+    t = (name or "").lower()
+    if t in TRANSITION_SPECS:
+        return TRANSITION_SPECS[t]
+    if "white" in t:
+        return TransitionSpec("fadewhite", "fadewhite", "tri")
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +276,7 @@ def capability_manifest() -> Dict[str, Any]:
         "schema_version": MANIFEST_VERSION,
         "operations": sorted(OPERATIONS),
         "transition_types": list(TRANSITION_TYPES),
+        "transition": {name: spec.to_dict() for name, spec in TRANSITION_SPECS.items()},
         "transform": {name: spec.to_dict() for name, spec in TRANSFORM_PARAMS.items()},
         "effects": {
             "video": {s.canonical: s.to_dict() for s in VIDEO_EFFECT_SPECS.values()},

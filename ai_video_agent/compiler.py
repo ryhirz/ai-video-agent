@@ -23,6 +23,7 @@ from .registry import (  # 单一真相：编译 / 校验 / 能力清单共用 r
     VIDEO_EFFECTS,
     PARAM_VIDEO_EFFECTS as _PARAM_VIDEO_EFFECTS,
     SIMPLE_VIDEO_EFFECTS as _SIMPLE_VIDEO_EFFECTS,
+    resolve_transition,
     validate_transform,
 )
 
@@ -230,13 +231,9 @@ def _transition_between(transitions: List[Transition], id_a: str,
 
 
 def _xfade_kind(transition_type: str) -> str:
-    """契约 transitionType -> ffmpeg xfade.transition。"""
-    t = (transition_type or "").lower()
-    if "white" in t:
-        return "fadewhite"
-    if t.startswith("wipe"):
-        return "wiperight"
-    return "fade"          # fade / cross 均归一为交叉淡化
+    """契约 transitionType -> ffmpeg xfade.transition（从 registry 取，单一真相）。"""
+    spec = resolve_transition(transition_type)
+    return spec.video if spec else "fade"
 
 
 def xfade_offset(clip_a: Clip, duration: float) -> float:
@@ -302,15 +299,18 @@ def build_xfade_filter(label_a: str, label_b: str, out_label: str,
 
 
 def build_acrossfade_filter(label_a: str, label_b: str, out_label: str,
-                            duration: float) -> str:
-    """音频交叉淡化：曲线固定 tri（线性）。
+                            duration: float,
+                            transition_type: str = "fade") -> str:
+    """音频交叉淡化：曲线从 registry 取（tri = 线性）。
 
     注意：acrossfade 的 c1/c2 是**曲线类型**（nofade/tri/qsin/...），不接受
-    "fade"（那是 xfade 的 transition 名）。tri = 线性斜率，与 xfade 的 fade
-    语义一致，且不向 planner 暴露曲线选择。
+    "fade"（那是 xfade 的 transition 名）。tri 与 xfade=transition=fade 语义一致，
+    且不向 planner 暴露曲线选择。
     """
+    spec = resolve_transition(transition_type)
+    curve = spec.audio_curve if spec else "tri"
     return (f"[{label_a}][{label_b}]acrossfade=d={_fmt_num(duration)}"
-            f":c1=tri:c2=tri[{out_label}]")
+            f":c1={curve}:c2={curve}[{out_label}]")
 
 
 def _audio_groups_for(v_groups: List[List[Clip]], vclips: List[Clip],
@@ -329,7 +329,15 @@ def _audio_groups_for(v_groups: List[List[Clip]], vclips: List[Clip],
 
 
 def compile(tl: Timeline) -> Dict[str, Any]:
-    """纯函数：只读 tl -> FFmpeg 描述。同输入同输出。"""
+    """纯函数：只读 tl -> FFmpeg 描述。同输入同输出。
+
+    转场与片段级操作的作用域（正交，互不影响）：
+    - transform / effect 作用于片段的**源全段**（sourceIn..sourceOut），
+      即进入 xfade 之前的完整画面；
+    - transition 只在**片段边界的 duration 区间**内消费时间（xfade/acrossfade），
+      被消耗的是边界时长，不会改变 transform / effect 已作用的内容。
+    因此「链式 xfade 吃掉中间片段的两头」与「该片段上的调色/位移效果」互不干扰。
+    """
     W = tl.metadata.resolution.get("w", 1920)
     H = tl.metadata.resolution.get("h", 1080)
     vclips = sorted([c for c in tl.clips if _track_type(tl, c) == "video"], key=lambda c: c.in_)
@@ -519,7 +527,8 @@ def compile(tl: Timeline) -> Dict[str, Any]:
                     assert tr is not None, "音频分组与视频分组不同构"
                     d = float(tr.duration)
                     out = f"ag{gi}_{step}"
-                    af_tail.append(build_acrossfade_filter(cur, a_index[nxt.id], out, d))
+                    af_tail.append(build_acrossfade_filter(
+                        cur, a_index[nxt.id], out, d, tr.type))
                     cur = out
                 a_group_labels.append(f"[{cur}]")
             if len(a_group_labels) == 1:
