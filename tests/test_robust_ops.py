@@ -295,7 +295,10 @@ class TestCompiledAudioGraph(unittest.TestCase):
             {"type": "delete_range", "payload": {"start": 10.5, "end": 14.0}},
         ])
         res = compile_timeline(tl2)
-        self.assertIn("concat=n=3:v=0:a=1[aout]", res["audio_filter"])
+        # T6：delete_range 留下 2 处 gap（0.5–4.0 / 10.5–14.0），音频侧同步插 2 段静音，
+        # 所以 concat 输入 = 3 段音频 + 2 段静音 = 5；视频侧用 tpad 扩展单流，仍为 3。
+        self.assertIn("concat=n=5:v=0:a=1[aout]", res["audio_filter"])
+        self.assertEqual(res["audio_filter"].count("anullsrc="), 2)
         self.assertNotIn("amix", res["audio_filter"])
         # 视频同样是 3 段拼接
         self.assertIn("concat=n=3:v=1:a=0[vout]", res["video_filter"])

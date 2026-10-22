@@ -219,6 +219,48 @@ class TestRenderedEffectIsReal(unittest.TestCase):
         self.assertIsNotNone(px)
         self.assertLess(sum(px), 100, f"gap 应为黑帧：{px}")
 
+    def test_gap_audio_video_sync_with_audio(self) -> None:
+        """T6 修复验证：含音轨的 timeline 带 gap 时，成片音频时长与视频一致。
+
+        若音频链没有同步插入静音，ffmpeg `-shortest` 会按较短的音频截断视频，
+        导致 gap 后的片段被切掉。此测试验证 音频时长 >= 视频时长。
+        """
+        import json
+
+        tl = Timeline(
+            metadata=Metadata(schemaVersion="1.0.0", fps=30,
+                              resolution={"w": W, "h": H}, duration=5.0),
+            tracks=[Track("v_main", "video"), Track("a_main", "audio")],
+            clips=[
+                Clip("va", "v_main", str(self.src), 0.0, 1.0, 0.0, 1.0),
+                Clip("aa", "a_main", str(self.src), 0.0, 1.0, 0.0, 1.0),
+                Clip("vb", "v_main", str(self.src), 2.5, 3.5, 1.0, 2.0),
+                Clip("ab", "a_main", str(self.src), 2.5, 3.5, 1.0, 2.0),
+            ],
+        )
+        p, msg = render(tl, base_dir=str(self.dir / "gap_audio"))
+        self.assertIsNotNone(p, f"gap+音频渲染失败：{msg}")
+
+        def _stream_duration(path: str, stream: str):
+            r = subprocess.run(
+                [_ffprobe(), "-v", "error", "-select_streams", stream,
+                 "-show_entries", "stream=duration", "-of", "json", path],
+                capture_output=True, text=True)
+            try:
+                data = json.loads(r.stdout)
+                return float(data["streams"][0]["duration"])
+            except Exception:  # noqa: BLE001
+                return None
+
+        v_dur = _stream_duration(p, "v")
+        a_dur = _stream_duration(p, "a")
+        self.assertIsNotNone(v_dur, "未能获取视频时长")
+        self.assertIsNotNone(a_dur, "未能获取音频时长")
+        self.assertGreaterEqual(
+            a_dur, v_dur - 0.1,
+            f"音频时长({a_dur:.2f}s) < 视频时长({v_dur:.2f}s)，音画不同步！"
+            f"gap 静音可能未插入")
+
     def test_bgm_is_really_mixed_into_the_audio(self) -> None:
         p = self._render(OP_CASES["add_bgm"], "bgm")
         d = _pcm_diff(_pcm(p), _pcm(str(self.base)))

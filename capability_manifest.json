@@ -41,7 +41,9 @@
   },
   "gap_policy": {
     "fill": "tpad_black",
-    "scope": "between_groups_only"
+    "scope": "between_groups_only",
+    "audio_fill": "silence",
+    "audio_fill_desc": "组间 gap 处音频侧插入等长静音，与视频 tpad 黑帧同步，保证音画时长一致"
   },
   "subtitle_style": {
     "keys": [

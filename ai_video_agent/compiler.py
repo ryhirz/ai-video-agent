@@ -404,6 +404,37 @@ def _audio_groups_for(v_groups: List[List[Clip]], vclips: List[Clip],
     return out
 
 
+def _build_audio_chain_with_gaps(af_tail: List[str], base_labels: List[str],
+                                 video_groups: List[List[Clip]]) -> List[str]:
+    """构建带 gap 静音的音频链标签列表，与视频 tpad 黑帧同步。
+
+    对应视频侧 T6 方案 A：组间 gap 用 tpad 补黑帧，音频侧同步插入等长静音，
+    保证成片音画时长一致，不因 gap 被 `-shortest` 截断。
+
+    实现要点：ffmpeg 里 filter 的输入/输出**不能同名**（`[x]atrim[x]` 会报标签重复），
+    所以静音段用两个标签：`as{i}`（anullsrc 源）→ `asi{i}`（裁剪后）。
+    """
+    n_gaps = len(video_groups) - 1
+    if n_gaps <= 0:
+        return list(base_labels)
+
+    gaps: List[float] = []
+    for gi in range(n_gaps):
+        gap = video_groups[gi + 1][0].in_ - video_groups[gi][-1].out
+        gaps.append(gap if gap > 1e-6 else 0.0)
+
+    extended: List[str] = []
+    for i, lbl in enumerate(base_labels):
+        if i > 0 and (i - 1) < n_gaps and gaps[i - 1] > 1e-6:
+            src, dst = f"as{i - 1}", f"asi{i - 1}"
+            af_tail.append(f"anullsrc=r=48000:cl=mono[{src}]")
+            af_tail.append(f"[{src}]atrim=start=0:end={_fmt_num(gaps[i - 1])},"
+                           f"asetpts=PTS-STARTPTS[{dst}]")
+            extended.append(f"[{dst}]")
+        extended.append(lbl)
+    return extended
+
+
 def compile(tl: Timeline) -> Dict[str, Any]:
     """纯函数：只读 tl -> FFmpeg 描述。同输入同输出。
 
@@ -576,9 +607,10 @@ def compile(tl: Timeline) -> Dict[str, Any]:
                            + f"concat=n={len(main_aclips)}:v=0:a=1{final_label}")
             amain = final_label
         elif all(len(g) == 1 for g in audio_groups):
-            # 无有效转场：保持历史行为（concatenate，逐字节不变）
-            af_tail.append("".join(alabels)
-                           + f"concat=n={len(main_aclips)}:v=0:a=1{final_label}")
+            # T6：组间 gap 音频侧同步插静音；无 gap 时与历史产出完全一致
+            audio_chain = _build_audio_chain_with_gaps(af_tail, alabels, video_groups)
+            af_tail.append("".join(audio_chain)
+                           + f"concat=n={len(audio_chain)}:v=0:a=1{final_label}")
             amain = final_label
         else:
             a_index = {c.id: f"ca{j}" for j, c in enumerate(main_aclips)}
@@ -600,11 +632,14 @@ def compile(tl: Timeline) -> Dict[str, Any]:
                         cur, a_index[nxt.id], out, d, tr.type))
                     cur = out
                 a_group_labels.append(f"[{cur}]")
-            if len(a_group_labels) == 1:
-                af_tail.append(f"{a_group_labels[0]}anull{final_label}")
+            # T6：组间 gap 音频侧同步插静音
+            audio_chain = _build_audio_chain_with_gaps(
+                af_tail, a_group_labels, video_groups)
+            if len(audio_chain) == 1:
+                af_tail.append(f"{audio_chain[0]}anull{final_label}")
             else:
-                af_tail.append("".join(a_group_labels)
-                               + f"concat=n={len(a_group_labels)}:v=0:a=1{final_label}")
+                af_tail.append("".join(audio_chain)
+                               + f"concat=n={len(audio_chain)}:v=0:a=1{final_label}")
             amain = final_label
 
     amap = ""
