@@ -801,8 +801,12 @@ def _apply_add_text(t: Timeline, p: Dict[str, Any]) -> None:
     pos = str(p.get("position") or "bottom-center")
     if pos not in TEXT_POSITIONS:
         raise ValueError(f"add_text.position 不支持 `{pos}`；可用：{list(TEXT_POSITIONS)}")
-    start = float(p.get("start", 0.0))
-    end = float(p.get("end", 0.0))
+    # start/end 是必填项（validate_ops 已保证）；这里缺失直接报错，不用 0.0 兜底——
+    # 否则 end 缺省会让 0<=start<end 永远失败，报错信息反而绕。
+    if "start" not in p or "end" not in p:
+        raise ValueError("add_text 需要必填的 start 与 end")
+    start = float(p["start"])
+    end = float(p["end"])
     if start < 0 or start >= end:
         raise ValueError(f"add_text 需满足 0 <= start < end，收到 {start}/{end}")
 

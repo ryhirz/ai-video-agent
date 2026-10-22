@@ -497,7 +497,7 @@ class JsonPlanner:
         "1.0=原速、2.0=二倍速、0.5=半速；范围 0.01~1000）\n"
         "- add_text: {text, start, end, position?, margin?, x?, y?, font?, size?, color?, bg?}  "
         "画面文字/水印；position 九宫格（默认 bottom-center）+ margin（默认 20），"
-        "x/y 非空时覆盖定位；font 传字体名或字体文件路径\n"
+        "x 和 y 同时非空时覆盖定位；font 传字体名或字体文件路径\n"
         "\n"
         "【铁律：违反会被拒绝执行】\n"
         "1. targetClipId 只能取『当前 Timeline』里列出的 id，绝不能臆造或凭记忆写。\n"
