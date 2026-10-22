@@ -177,6 +177,26 @@ def validate_transform(values: Dict[str, Any]) -> List[str]:
             errs.append(f"transform.{name}={raw} 小于下限 {spec.min}")
         if spec.max is not None and raw > spec.max:
             errs.append(f"transform.{name}={raw} 超过上限 {spec.max}")
+
+    # T7：crop 是可选对象 {x,y,w,h}；w/h 在 (0,1) 视为占比，否则按源像素
+    crop = v.get("crop")
+    if crop is not None:
+        if not isinstance(crop, dict):
+            errs.append("transform.crop 必须是对象 {x,y,w,h}")
+        else:
+            for k in ("w", "h"):
+                val = crop.get(k)
+                if val is None:
+                    errs.append(f"transform.crop 缺少必填字段 {k}")
+                elif (isinstance(val, bool) or not isinstance(val, (int, float))
+                      or val <= 0):
+                    errs.append(f"transform.crop.{k} 必须 > 0，收到 {val!r}")
+            for k in ("x", "y"):
+                val = crop.get(k)
+                if val is not None and (isinstance(val, bool)
+                                        or not isinstance(val, (int, float))
+                                        or val < 0):
+                    errs.append(f"transform.crop.{k} 必须 >= 0，收到 {val!r}")
     return errs
 
 
@@ -336,7 +356,16 @@ def capability_manifest() -> Dict[str, Any]:
             "bg": {"default": "", "type": "string",
                    "description": "#RRGGBB / #RRGGBBAA；非空时启用背景框", "supported": True},
         },
-        "transform": {name: spec.to_dict() for name, spec in TRANSFORM_PARAMS.items()},
+        "transform": {
+            **{name: spec.to_dict() for name, spec in TRANSFORM_PARAMS.items()},
+            "crop": {
+                "type": "object",
+                "fields": ["x", "y", "w", "h"],
+                "description": "裁剪区域；w/h 在 (0,1) 视为占比（iw*0.8），"
+                               "否则按源像素；x/y 缺省时居中",
+                "supported": True,
+            },
+        },
         "effects": {
             "video": {s.canonical: s.to_dict() for s in VIDEO_EFFECT_SPECS.values()},
             "audio": {s.canonical: s.to_dict() for s in AUDIO_EFFECT_SPECS.values()},

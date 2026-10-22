@@ -106,6 +106,37 @@ def _fmt_num(v: float) -> str:
     return f"{float(v):g}"
 
 
+def _crop_expr(v: float, axis: str) -> str:
+    """crop 参数：0 < v <= 1 视为占比（iw* / ih*），否则按像素。
+
+    边界说明：v == 1.0 按"100% 占比"处理（等价不裁），而不是 1 像素 ——
+    "裁 1 像素宽"没有实际意义，因此这个约定是安全的。
+    """
+    if 0 < v <= 1:
+        return f"i{axis}*{_fmt_num(v)}"
+    return _fmt_num(v)
+
+
+def crop_filter(crop: Optional[Dict[str, float]]) -> Optional[str]:
+    """transform.crop -> crop 滤镜串（源坐标系，放在 scale 之前）。
+
+    - `w`/`h` 必填；`0 < v < 1` 视为占比（`iw*0.8`），否则按源像素。
+    - `x`/`y` 可省略：省略时交给 ffmpeg 的默认居中裁剪。
+    """
+    if not crop:
+        return None
+    w, h = crop.get("w"), crop.get("h")
+    if w is None or h is None:
+        return None
+    parts = [_crop_expr(float(w), "w"), _crop_expr(float(h), "h")]
+    x, y = crop.get("x"), crop.get("y")
+    if x is not None or y is not None:
+        x_expr = _crop_expr(float(x), "w") if x is not None else "(iw-ow)/2"
+        y_expr = _crop_expr(float(y), "h") if y is not None else "(ih-oh)/2"
+        parts += [x_expr, y_expr]
+    return "crop=" + ":".join(parts)
+
+
 def transform_geometry_filters(clip: Clip, out_w: int, out_h: int) -> List[str]:
     """clip.transform 的几何部分 -> pad / rotate（+ 尺寸回调）。
 
@@ -120,6 +151,7 @@ def transform_geometry_filters(clip: Clip, out_w: int, out_h: int) -> List[str]:
     errs = validate_transform({
         "x": tf.x, "y": tf.y, "scale": tf.scale,
         "rotation": tf.rotation, "opacity": tf.opacity,
+        "crop": tf.crop,
     })
     if errs:
         raise ValueError("transform 非法：" + "；".join(errs))
@@ -619,7 +651,12 @@ def compile(tl: Timeline) -> Dict[str, Any]:
         lbl = f"cv{i}"
         dur = c.sourceOut - c.sourceIn
         chain = [f"trim=start={c.sourceIn}:end={c.sourceOut}",
-                 "setpts=PTS-STARTPTS", f"scale={W}:{H}"]
+                 "setpts=PTS-STARTPTS"]
+        # T7：crop 在 scale 之前（源坐标系；w/h < 1 视为占比）
+        crop = crop_filter(c.transform.crop)
+        if crop:
+            chain.append(crop)
+        chain.append(f"scale={W}:{H}")
         # T7：变速必须在 trim/setpts 之后 —— 否则 trim 的 start/end 会按变速后的
         # PTS 解释，切点全错（把 setpts 插到链首会切空）。
         sr = _speed_rate(c)

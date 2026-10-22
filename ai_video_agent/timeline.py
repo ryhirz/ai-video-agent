@@ -33,6 +33,9 @@ class Transform:
     scale: float = 1.0
     rotation: float = 0.0
     opacity: float = 1.0
+    # T7：裁剪区域 {x, y, w, h}；w/h 在 (0,1) 视为占比（iw*0.8），否则按源像素。
+    # x/y 缺省时 ffmpeg 默认居中裁剪。
+    crop: Optional[Dict[str, float]] = None
 
 
 @dataclass
