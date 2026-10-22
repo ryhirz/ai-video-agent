@@ -433,8 +433,17 @@ def build_ass_content(tl: Timeline) -> str:
 # T5 真转场：xfade / acrossfade + 纯函数分组
 # ---------------------------------------------------------------------------
 def _stream_dur(clip: Clip) -> float:
-    """片段在流上的实际时长（trim + setpts 之后）。"""
-    return float(clip.sourceOut - clip.sourceIn)
+    """片段在流上的实际时长（trim + setpts 之后，并计入 speed 变速）。
+
+    speed 会改变输出时长（1s @1.5x = 0.667s）。xfade 的 offset、组间 gap 与成片
+    时长都必须用这个「真实流时长」—— 否则转场会落在片段之外（端到端验收踩到：
+    1s 片段变速 1.5x 后仍按 offset=0.7 起转，成片只出了 1.04s）。
+    """
+    base = float(clip.sourceOut - clip.sourceIn)
+    rate = _speed_rate(clip)
+    if rate is not None and rate > 0 and abs(rate - 1.0) > 1e-9:
+        base /= rate
+    return base
 
 
 def _transition_between(transitions: List[Transition], id_a: str,
