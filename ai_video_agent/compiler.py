@@ -882,6 +882,8 @@ def compile(tl: Timeline) -> Dict[str, Any]:
     elif len(main_aclips) > 1:
         audio_groups = _audio_groups_for(video_groups, vclips, main_aclips)
         if audio_groups is None:
+            # T5.2 后此分支只剩「音频多于视频」可达（缺音轨已被补齐、数量必然一致）；
+            # 保留作为防御性降级，不删。
             unsupported.append(
                 f"音频片段数({len(main_aclips)})与视频({len(vclips)})不一致，"
                 f"音频转场已跳过（成片可能音画不同步）")
