@@ -3,6 +3,7 @@
   "operations": [
     "add_bgm",
     "add_subtitle",
+    "add_text",
     "cut",
     "delete_clip",
     "delete_range",
@@ -69,6 +70,67 @@
         "atempo"
       ],
       "description": "音频变速后端；rubberband 本机构建可用但未启用",
+      "supported": true
+    }
+  },
+  "add_text": {
+    "position": {
+      "choices": [
+        "top-left",
+        "top-center",
+        "top-right",
+        "center-left",
+        "center",
+        "center-right",
+        "bottom-left",
+        "bottom-center",
+        "bottom-right"
+      ],
+      "default": "bottom-center",
+      "description": "九宫格锚点；x/y 非空时被覆盖",
+      "supported": true
+    },
+    "margin": {
+      "default": 20,
+      "min": 0,
+      "type": "number",
+      "description": "边距像素",
+      "supported": true
+    },
+    "x": {
+      "default": null,
+      "type": "number",
+      "description": "像素坐标；非空时覆盖 position+margin",
+      "supported": true
+    },
+    "y": {
+      "default": null,
+      "type": "number",
+      "description": "像素坐标；非空时覆盖 position+margin",
+      "supported": true
+    },
+    "font": {
+      "default": "",
+      "type": "string",
+      "description": "字体名或字体文件路径；解析不到时降级 + unsupported",
+      "supported": true
+    },
+    "size": {
+      "default": 24,
+      "min": 8,
+      "max": 512,
+      "type": "number",
+      "supported": true
+    },
+    "color": {
+      "default": "#FFFFFF",
+      "type": "string",
+      "supported": true
+    },
+    "bg": {
+      "default": "",
+      "type": "string",
+      "description": "#RRGGBB / #RRGGBBAA；非空时启用背景框",
       "supported": true
     }
   },

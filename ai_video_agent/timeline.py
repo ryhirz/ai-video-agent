@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field, asdict
-from typing import Any, Dict, List, Literal
+from typing import Any, Dict, List, Literal, Optional
 
 TrackType = Literal["video", "audio", "subtitle", "effect"]
 
@@ -73,6 +73,28 @@ class Subtitle:
 
 
 @dataclass
+class TextOverlay:
+    """画面文字（水印 / 标题），独立于字幕轨。
+
+    坐标方案：`position`（九宫格）+ `margin`；`x`/`y` 非空时**覆盖**前者。
+    这是契约 v1.0.0 的新增可选集合，旧 Timeline 缺省为空、不影响兼容。
+    """
+
+    id: str
+    text: str
+    start: float
+    end: float
+    position: str = "bottom-center"
+    margin: float = 20.0
+    x: Optional[float] = None
+    y: Optional[float] = None
+    font: str = ""
+    size: int = 24
+    color: str = "#FFFFFF"
+    bg: str = ""
+
+
+@dataclass
 class Transition:
     id: str
     type: str
@@ -87,6 +109,7 @@ class Timeline:
     clips: List[Clip] = field(default_factory=list)
     subtitles: List[Subtitle] = field(default_factory=list)
     transitions: List[Transition] = field(default_factory=list)
+    texts: List[TextOverlay] = field(default_factory=list)
 
     # ---- 序列化 ----
     def to_dict(self) -> Dict[str, Any]:
@@ -96,6 +119,7 @@ class Timeline:
             "clips": [c.to_dict() for c in self.clips],
             "subtitles": [asdict(s) for s in self.subtitles],
             "transitions": [asdict(t) for t in self.transitions],
+            "texts": [asdict(t) for t in self.texts],
         }
 
     def dumps(self, indent: int = 2) -> str:
@@ -109,6 +133,7 @@ class Timeline:
             clips=[Clip.from_dict(c) for c in d.get("clips", [])],
             subtitles=[Subtitle(**s) for s in d.get("subtitles", [])],
             transitions=[Transition(**t) for t in d.get("transitions", [])],
+            texts=[TextOverlay(**t) for t in d.get("texts", [])],
         )
 
     @classmethod

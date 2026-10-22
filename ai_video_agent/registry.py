@@ -71,6 +71,9 @@ OPERATIONS: Dict[str, Dict[str, Any]] = {
                                                            "params"]},
     "speed":        {"summary": "变速（视频 setpts + 音频 atempo）",
                      "payload": ["targetClipId", "rate"]},
+    "add_text":     {"summary": "画面上叠加文字（水印/标题）",
+                     "payload": ["text", "start", "end", "position", "margin",
+                                 "x", "y", "font", "size", "color", "bg"]},
 }
 
 @dataclass(frozen=True)
@@ -101,6 +104,13 @@ TRANSITION_SPECS: Dict[str, TransitionSpec] = {
     "wipe": TransitionSpec("wipe", "wiperight", "tri"),
 }
 TRANSITION_TYPES: Tuple[str, ...] = tuple(TRANSITION_SPECS)
+
+# 文字水印的九宫格锚点（与 subtitle 的 position 语义一致）
+TEXT_POSITIONS: Tuple[str, ...] = (
+    "top-left", "top-center", "top-right",
+    "center-left", "center", "center-right",
+    "bottom-left", "bottom-center", "bottom-right",
+)
 
 
 def resolve_transition(name: str) -> Optional[TransitionSpec]:
@@ -307,6 +317,24 @@ def capability_manifest() -> Dict[str, Any]:
             "audio_backend": {"default": "atempo", "choices": ["atempo"],
                               "description": "音频变速后端；rubberband 本机构建可用但未启用",
                               "supported": True},
+        },
+        "add_text": {
+            "position": {"choices": list(TEXT_POSITIONS), "default": "bottom-center",
+                         "description": "九宫格锚点；x/y 非空时被覆盖", "supported": True},
+            "margin": {"default": 20, "min": 0, "type": "number",
+                       "description": "边距像素", "supported": True},
+            "x": {"default": None, "type": "number",
+                  "description": "像素坐标；非空时覆盖 position+margin", "supported": True},
+            "y": {"default": None, "type": "number",
+                  "description": "像素坐标；非空时覆盖 position+margin", "supported": True},
+            "font": {"default": "", "type": "string",
+                     "description": "字体名或字体文件路径；解析不到时降级 + unsupported",
+                     "supported": True},
+            "size": {"default": 24, "min": 8, "max": 512, "type": "number",
+                     "supported": True},
+            "color": {"default": "#FFFFFF", "type": "string", "supported": True},
+            "bg": {"default": "", "type": "string",
+                   "description": "#RRGGBB / #RRGGBBAA；非空时启用背景框", "supported": True},
         },
         "transform": {name: spec.to_dict() for name, spec in TRANSFORM_PARAMS.items()},
         "effects": {

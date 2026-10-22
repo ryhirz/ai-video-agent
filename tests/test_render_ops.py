@@ -113,6 +113,8 @@ OP_CASES = {
     "speed": [{"type": "cut", "payload": {"targetClipId": "src_video", "at": 1.0}},
               {"type": "speed", "payload": {"targetClipId": "src_video__a",
                                             "rate": 2.0}}],
+    "add_text": [{"type": "add_text", "payload": {"text": "水印",
+                                                  "start": 0.0, "end": 1.0}}],
 }
 
 

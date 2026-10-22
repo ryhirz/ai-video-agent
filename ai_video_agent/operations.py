@@ -23,9 +23,9 @@ from __future__ import annotations
 import copy
 from typing import Any, Dict, List, Optional, Tuple
 
-from .timeline import Timeline, Clip, Subtitle, Track, Transition
+from .timeline import Timeline, Clip, Subtitle, TextOverlay, Track, Transition
 from .compiler import AUDIO_EFFECTS, BGM_MARKER, VIDEO_EFFECTS
-from .registry import SPEED_MARKER, TRANSITION_TYPES, resolve_effect
+from .registry import SPEED_MARKER, TEXT_POSITIONS, TRANSITION_TYPES, resolve_effect
 
 
 class OperationError(RuntimeError):
@@ -240,6 +240,21 @@ def validate_ops(tl: Optional[Timeline],
                 errors.append(_err(op, i, "payload.rate", f"必须 > 0，收到 {r!r}"))
             elif r > 1000:
                 errors.append(_err(op, i, "payload.rate", f"不能超过 1000，收到 {r}"))
+        elif typ == "add_text":
+            txt = p.get("text")
+            if not isinstance(txt, str) or not txt.strip():
+                errors.append(_err(op, i, "payload.text", "必须是非空字符串"))
+            pos = p.get("position", "bottom-center")
+            if pos not in TEXT_POSITIONS:
+                errors.append(_err(op, i, "payload.position",
+                                   f"不支持 `{pos}`；可用：{list(TEXT_POSITIONS)}"))
+            s, e = p.get("start"), p.get("end")
+            if not (_is_num(s) and _is_num(e)):
+                errors.append(_err(op, i, "payload.start",
+                                   f"start/end 必须是数字，收到 {s!r} / {e!r}"))
+            elif s < 0 or s >= e:
+                errors.append(_err(op, i, "payload.start",
+                                   f"需满足 0 <= start < end，收到 {s} / {e}"))
     return errors
 
 
@@ -778,6 +793,38 @@ def _apply_speed(t: Timeline, p: Dict[str, Any]) -> None:
                 _set_speed(other, rate)
 
 
+def _apply_add_text(t: Timeline, p: Dict[str, Any]) -> None:
+    """把文字水印 / 标题追加到 `Timeline.texts`（独立于字幕轨）。"""
+    text = str(p.get("text") or "")
+    if not text:
+        raise ValueError("add_text 需要非空 text")
+    pos = str(p.get("position") or "bottom-center")
+    if pos not in TEXT_POSITIONS:
+        raise ValueError(f"add_text.position 不支持 `{pos}`；可用：{list(TEXT_POSITIONS)}")
+    start = float(p.get("start", 0.0))
+    end = float(p.get("end", 0.0))
+    if start < 0 or start >= end:
+        raise ValueError(f"add_text 需满足 0 <= start < end，收到 {start}/{end}")
+
+    n = len(t.texts) + 1
+    while any(x.id == f"txt_{n}" for x in t.texts):
+        n += 1
+    t.texts.append(TextOverlay(
+        id=f"txt_{n}",
+        text=text,
+        start=start,
+        end=end,
+        position=pos,
+        margin=float(p.get("margin", 20)),
+        x=None if p.get("x") is None else float(p["x"]),
+        y=None if p.get("y") is None else float(p["y"]),
+        font=str(p.get("font") or ""),
+        size=int(p.get("size", 24)),
+        color=str(p.get("color") or "#FFFFFF"),
+        bg=str(p.get("bg") or ""),
+    ))
+
+
 # ---------------------------------------------------------------------------
 # 操作类型 -> 处理函数
 # ---------------------------------------------------------------------------
@@ -794,4 +841,5 @@ OPERATION_HANDLERS = {
     "transition": _apply_transition,
     "effect": _apply_effect,
     "speed": _apply_speed,
+    "add_text": _apply_add_text,
 }

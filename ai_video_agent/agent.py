@@ -49,7 +49,7 @@ _ZH2EN = {
 # 契约 v1.0.0 允许的操作类型（超出即视为模型幻觉，直接报错而不是让它继续污染操作链）
 OPS_V1 = ("cut", "trim", "add_subtitle", "add_bgm",
           "delete_clip", "delete_range", "move_clip", "transition", "effect",
-          "speed")
+          "speed", "add_text")
 
 
 def _speech_by_shot(index: FootageIndex) -> List[Tuple[float, float, List[str]]]:
@@ -495,6 +495,9 @@ class JsonPlanner:
         "音轨上可用 \"volume\"/\"fade_in\"/\"fade_out\"\n"
         "- speed: {targetClipId, rate}     变速（视频与配对音频同步；"
         "1.0=原速、2.0=二倍速、0.5=半速；范围 0.01~1000）\n"
+        "- add_text: {text, start, end, position?, margin?, x?, y?, font?, size?, color?, bg?}  "
+        "画面文字/水印；position 九宫格（默认 bottom-center）+ margin（默认 20），"
+        "x/y 非空时覆盖定位；font 传字体名或字体文件路径\n"
         "\n"
         "【铁律：违反会被拒绝执行】\n"
         "1. targetClipId 只能取『当前 Timeline』里列出的 id，绝不能臆造或凭记忆写。\n"

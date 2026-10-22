@@ -18,10 +18,12 @@
 """
 from __future__ import annotations
 
+import platform
 import re
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .timeline import Timeline, Clip, Transition
+from .timeline import Timeline, Clip, TextOverlay, Transition
 from .registry import (  # 单一真相：编译 / 校验 / 能力清单共用 registry 的表
     AUDIO_EFFECTS,
     BGM_MARKER,
@@ -220,6 +222,111 @@ def _atempo_filters(rate: float) -> List[str]:
     if abs(r - 1.0) > 1e-9:
         filters.append(f"atempo={_fmt_num(r)}")
     return filters
+
+
+# ---------------------------------------------------------------------------
+# T7：文字水印 -> drawtext
+# ---------------------------------------------------------------------------
+# 字体名 -> 各平台候选路径。fontconfig 在 Windows 实测加载失败（无法读取默认配置），
+# 所以只能走 fontfile；候选路径按平台挑第一个存在的。
+_FONT_CANDIDATES: Dict[str, Dict[str, List[str]]] = {
+    "arial": {
+        "win32": ["C:/Windows/Fonts/arial.ttf", "C:/Windows/Fonts/arialbd.ttf"],
+        "linux": ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                  "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"],
+        "darwin": ["/System/Library/Fonts/Helvetica.ttc",
+                   "/System/Library/Fonts/Supplemental/Arial.ttf"],
+    },
+    "microsoft yahei": {
+        "win32": ["C:/Windows/Fonts/msyh.ttc", "C:/Windows/Fonts/msyhbd.ttc"],
+        "linux": ["/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"],
+        "darwin": ["/System/Library/Fonts/PingFang.ttc"],
+    },
+    "simhei": {
+        "win32": ["C:/Windows/Fonts/simhei.ttf"],
+        "linux": ["/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"],
+        "darwin": ["/System/Library/Fonts/PingFang.ttc"],
+    },
+    "simsun": {
+        "win32": ["C:/Windows/Fonts/simsun.ttc"],
+        "linux": ["/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"],
+        "darwin": ["/System/Library/Fonts/PingFang.ttc"],
+    },
+}
+# 中文别名
+_FONT_CANDIDATES["微软雅黑"] = _FONT_CANDIDATES["microsoft yahei"]
+_FONT_CANDIDATES["黑体"] = _FONT_CANDIDATES["simhei"]
+_FONT_CANDIDATES["宋体"] = _FONT_CANDIDATES["simsun"]
+
+_PLATFORM_KEY = {"Windows": "win32", "Linux": "linux", "Darwin": "darwin"}
+
+
+def _resolve_font(name: str) -> Optional[str]:
+    """字体名 / 文件路径 -> 可用的字体文件路径；找不到返回 None。"""
+    if not name:
+        return None
+    p = Path(name)
+    if p.suffix.lower() in (".ttf", ".ttc", ".otf") and p.exists():
+        return str(p)
+    cands = _FONT_CANDIDATES.get(name.strip().lower())
+    if not cands:
+        return None
+    key = _PLATFORM_KEY.get(platform.system(), "linux")
+    for c in cands.get(key, []):
+        if Path(c).exists():
+            return c
+    return None
+
+
+def _escape_drawtext(s: str) -> str:
+    """转义 drawtext 参数里的 filtergraph 特殊字符（顺序：先 \\，再 '，最后 :）。"""
+    return (s.replace("\\", "\\\\")
+             .replace("'", "\\'")
+             .replace(":", "\\:"))
+
+
+_POSITION_EXPR: Dict[str, Tuple[str, str]] = {
+    "top-left": ("{m}", "{m}"),
+    "top-center": ("(w-text_w)/2", "{m}"),
+    "top-right": ("w-text_w-{m}", "{m}"),
+    "center-left": ("{m}", "(h-text_h)/2"),
+    "center": ("(w-text_w)/2", "(h-text_h)/2"),
+    "center-right": ("w-text_w-{m}", "(h-text_h)/2"),
+    "bottom-left": ("{m}", "h-text_h-{m}"),
+    "bottom-center": ("(w-text_w)/2", "h-text_h-{m}"),
+    "bottom-right": ("w-text_w-{m}", "h-text_h-{m}"),
+}
+
+
+def drawtext_filter(t: TextOverlay,
+                    unsupported: Optional[List[str]] = None) -> str:
+    """TextOverlay -> drawtext 滤镜串。"""
+    m = _fmt_num(t.margin)
+    if t.x is not None and t.y is not None:
+        x_expr, y_expr = _fmt_num(t.x), _fmt_num(t.y)
+    else:
+        xe, ye = _POSITION_EXPR.get(t.position, _POSITION_EXPR["bottom-center"])
+        x_expr, y_expr = xe.format(m=m), ye.format(m=m)
+
+    parts: List[str] = []
+    font_path = _resolve_font(t.font)
+    if font_path:
+        parts.append(f"fontfile='{_escape_drawtext(font_path)}'")
+    elif t.font and unsupported is not None:
+        unsupported.append(
+            f"字体 `{t.font}` 未找到，已回退默认字体（文字仍会渲染）")
+
+    parts += [
+        f"text='{_escape_drawtext(t.text)}'",
+        f"fontsize={int(t.size)}",
+        f"fontcolor={t.color}",
+        f"x={x_expr}",
+        f"y={y_expr}",
+    ]
+    if t.bg:
+        parts += ["box=1", f"boxcolor={t.bg}", "boxborderw=6"]
+    parts.append(f"enable='between(t,{_fmt_num(t.start)},{_fmt_num(t.end)})'")
+    return "drawtext=" + ":".join(parts)
 
 
 def build_ass_content(tl: Timeline) -> str:
@@ -634,6 +741,13 @@ def compile(tl: Timeline) -> Dict[str, Any]:
             vf_tail.append("".join(group_labels)
                            + f"concat=n={len(group_labels)}:v=1:a=0[vout]")
         vmap = "[vout]"
+
+    # ---- 文字水印（T7）：在字幕之前叠加 → 字幕保持在最上层 ----
+    for idx, t in enumerate(tl.texts):
+        if vmap:
+            lbl = f"vtext{idx}"
+            vf_tail.append(f"{vmap}{drawtext_filter(t, unsupported)}[{lbl}]")
+            vmap = f"[{lbl}]"
 
     # ---- 字幕叠加 ----
     ass = build_ass_content(tl) if tl.subtitles else ""
