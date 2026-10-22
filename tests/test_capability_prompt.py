@@ -71,7 +71,43 @@ class TestHallucinationIsBlocked(unittest.TestCase):
         self.assertIn("不支持的效果", errs[0]["reason"])
 
     def test_unsupported_request_yields_no_op(self) -> None:
-        """当前不支持变速/水印：planner 应输出 []，而不是编一个假操作。"""
+        """模型对清单外请求应输出 []（stub 直接给 "[]"，验证解析通路）。"""
         planner = agent.JsonPlanner(_Stub("[]"))
         ops = planner.plan("把这段视频加速到 2 倍并加个水印", _tl(), None)
         self.assertEqual(ops, [])
+
+
+class TestDynamicSchemaHint(unittest.TestCase):
+    """T7.1：_SCHEMA_HINT 的操作字段段从 registry 动态生成。"""
+
+    def test_generate_schema_hint_contains_all_ops(self) -> None:
+        from ai_video_agent.registry import generate_schema_hint
+        hint = generate_schema_hint()
+        for op in OPERATIONS:                      # 11 类操作一个不少
+            self.assertIn(f"- {op}:", hint, f"缺少操作 {op}")
+
+    def test_schema_hint_keeps_iron_rules(self) -> None:
+        """铁律 / 示例保留手写，动态化不得影响它们。"""
+        h = agent.JsonPlanner._SCHEMA_HINT
+        for k in ("【铁律", "【示例", "3b.", "按镜头聚合", "半个镜头"):
+            self.assertIn(k, h)
+
+    def test_schema_hint_dynamic_fields(self) -> None:
+        """结构化参数来自能力段（不是手写文本）。"""
+        h = agent.JsonPlanner._SCHEMA_HINT
+        self.assertIn("rate: number", h)
+        self.assertIn("min=0.01", h)
+        self.assertIn("text: string", h)
+        self.assertIn("enum: top-left", h)
+
+    def test_new_op_only_needs_registry(self) -> None:
+        """验收标准 1：往 OPERATIONS 加一个操作，提示词自动包含（不改 agent.py）。"""
+        from ai_video_agent import registry
+        from ai_video_agent.registry import generate_schema_hint
+        registry.OPERATIONS["_fake_op"] = {
+            "summary": "测试用假操作", "payload": ["x"],
+            "hint": "- _fake_op: {x} —— 测试"}
+        try:
+            self.assertIn("- _fake_op:", generate_schema_hint())
+        finally:
+            del registry.OPERATIONS["_fake_op"]

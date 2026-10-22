@@ -103,11 +103,12 @@ class TestDurationConservation(unittest.TestCase):
 
 class TestNoAudio(unittest.TestCase):
     def test_video_only_still_xfades(self) -> None:
+        """无音频素材：T5.2 补静音轨后，静音也参与 acrossfade（音画同步完整语义）。"""
         result = compiler.compile(_tl(
             [_v("a", 0, 4), _v("b", 4, 8)],
             [Transition("t1", "fade", 1.0, ["a", "b"])]))
         self.assertIn("xfade=", result["video_filter"])
-        self.assertNotIn("acrossfade", result["audio_filter"])
+        self.assertIn("acrossfade=d=1", result["audio_filter"])
 
 
 class TestLegacyPathUnchanged(unittest.TestCase):

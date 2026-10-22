@@ -47,6 +47,10 @@
     "audio_fill": "silence",
     "audio_fill_desc": "组间 gap 处音频侧插入等长静音，与视频 tpad 黑帧同步，保证音画时长一致"
   },
+  "partial_audio_policy": {
+    "video_without_audio": "fill_silence",
+    "audio_without_video": "keep_audio"
+  },
   "subtitle_style": {
     "keys": [
       "font",
@@ -58,6 +62,7 @@
   },
   "speed": {
     "rate": {
+      "type": "number",
       "default": 1.0,
       "min": 0.01,
       "max": 1000,
@@ -65,6 +70,7 @@
       "supported": true
     },
     "audio_backend": {
+      "type": "string",
       "default": "atempo",
       "choices": [
         "atempo"
@@ -74,7 +80,23 @@
     }
   },
   "add_text": {
+    "text": {
+      "type": "string",
+      "description": "文字内容",
+      "supported": true
+    },
+    "start": {
+      "type": "number",
+      "description": "开始时间（秒）",
+      "supported": true
+    },
+    "end": {
+      "type": "number",
+      "description": "结束时间（秒）",
+      "supported": true
+    },
     "position": {
+      "type": "string",
       "choices": [
         "top-left",
         "top-center",

@@ -469,36 +469,21 @@ def capability_block() -> str:
 class JsonPlanner:
     """真实 LLM 路径：把操作 schema + 真实上下文放进提示词，解析模型输出的 JSON 操作列表。"""
 
-    _SCHEMA_HINT = (
+    # T7.1：操作字段段由 registry.generate_schema_hint() 动态生成（import 时执行一次）；
+    # 角色 / 铁律 / 示例保留手写 —— 测试与 LLM 行为都依赖它们的确切文本。
+    from .registry import generate_schema_hint
+
+    _ROLE_LINE = (
         "你是视频剪辑智能体的规划器。你的唯一输出是一个 JSON 数组（不能有解释文字、"
         "不能有 Markdown 代码块）。每个元素形如 "
         '{"type":"<操作名>","payload":{...}}。\n'
-        "\n"
-        "【可用操作与字段】\n"
-        "- cut: {targetClipId, at}          在 at 秒把该 clip 切成两段\n"
-        "- trim: {targetClipId, in?, out?}  只保留 [in,out] 秒区间（去掉前N秒=in:N；"
-        "去掉后N秒=out:总时长-N）\n"
-        "- delete_clip: {targetClipId}      删除一个 clip（视频段被删时其配对音频会一起删）\n"
-        "- delete_range: {start, end}       【删除内容推荐写法】按素材绝对秒数删除 [start,end]，"
-        "视频与其配对音频一起删；不依赖派生 id\n"
-        "- add_subtitle: {text, start, end}\n"
-        "- add_bgm: {sourceRef, in, out, volume?, fadeIn?, fadeOut?}  铺背景音乐，"
-        "与主音频混音（不会盖掉原声）\n"
-        "- move_clip: {targetClipId, toTrack?, toIn?}  把片段挪到 toIn 秒处，"
-        "整条轨会重排为顺序相接\n"
-        "- transition: {transitionType, duration, clips:[前一个id, 后一个id]}  "
-        "片段交界处淡出/淡入（transitionType 用 fade；fadewhite 为淡入淡出到白）\n"
-        "- effect: {targetClipId, effectType, params?}  画面效果 effectType 只能用 "
-        "\"grayscale\"/\"blur\"/\"brightness\"/\"contrast\"/\"saturation\"/\"sepia\"/"
-        "\"invert\"/\"mirror\"/\"fade_in\"/\"fade_out\""
-        "（配 params 如 {\"value\":0.2}、{\"radius\":5}、{\"duration\":1.0}）；"
-        "音轨上可用 \"volume\"/\"fade_in\"/\"fade_out\"\n"
-        "- speed: {targetClipId, rate}     变速（视频与配对音频同步；"
-        "1.0=原速、2.0=二倍速、0.5=半速；范围 0.01~1000）\n"
-        "- add_text: {text, start, end, position?, margin?, x?, y?, font?, size?, color?, bg?}  "
-        "画面文字/水印；position 九宫格（默认 bottom-center）+ margin（默认 20），"
-        "x 和 y 同时非空时覆盖定位；font 传字体名或字体文件路径\n"
-        "\n"
+    )
+
+    _SCHEMA_HINT = (
+        _ROLE_LINE
+        + "\n【可用操作与字段】\n"
+        + generate_schema_hint()
+        + "\n\n"
         "【铁律：违反会被拒绝执行】\n"
         "1. targetClipId 只能取『当前 Timeline』里列出的 id，绝不能臆造或凭记忆写。\n"
         "2. 操作按数组顺序依次执行。cut 会把该 clip 拆成两个新 clip："

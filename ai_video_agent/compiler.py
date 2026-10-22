@@ -597,6 +597,48 @@ def _audio_groups_for(v_groups: List[List[Clip]], vclips: List[Clip],
     return out
 
 
+# T5.2：静音片段的 sourceRef 标记 —— 有此标记的 clip 没有输入文件，
+# 音频链构建时直接在 filtergraph 里用 anullsrc 生成，不占 -i 输入位。
+ANULLSRC_REF = "__anullsrc__"
+
+
+def _fill_missing_audio(vclips: List[Clip], main_aclips: List[Clip]) -> List[Clip]:
+    """为没有配对音频的视频片段补静音 clip（T5.2）。
+
+    配对规则与 `_apply_speed` 的 A/V 同步一致：同 sourceRef + 同源区间。
+    补齐的静音片段**只覆盖片段本身的流时长**；组与组之间的空隙仍由
+    T6 的 gap 机制统一插静音 —— 职责分离，不会双插。
+
+    不记 unsupported：补齐是自动修正而非降级（验收标准：缺音轨正常出片、
+    不产生警告）；该行为已声明在 manifest 的 `partial_audio_policy`。
+
+    音频多于视频时不在这里处理（沿用原有 concat + `-shortest` 降级）。
+    """
+    if len(main_aclips) >= len(vclips):
+        return main_aclips
+    used: set = set()
+    filled: List[Clip] = []
+    for v in vclips:
+        match = None
+        for a in main_aclips:
+            if id(a) in used:
+                continue
+            if (a.sourceRef == v.sourceRef
+                    and abs(a.sourceIn - v.sourceIn) < 1e-6
+                    and abs(a.sourceOut - v.sourceOut) < 1e-6):
+                match = a
+                used.add(id(a))
+                break
+        if match is not None:
+            filled.append(match)
+        else:
+            dur = _stream_dur(v)          # 含变速：视频 1.5x，静音也 1.5x 长
+            filled.append(Clip(
+                id=f"__silence_{v.id}", track="a_main", sourceRef=ANULLSRC_REF,
+                in_=v.in_, out=v.out, sourceIn=0.0, sourceOut=dur))
+    return filled
+
+
 def _build_audio_chain_with_gaps(af_tail: List[str], base_labels: List[str],
                                  video_groups: List[List[Clip]]) -> List[str]:
     """构建带 gap 静音的音频链标签列表，与视频 tpad 黑帧同步。
@@ -696,23 +738,37 @@ def compile(tl: Timeline) -> Dict[str, Any]:
         vid_parts.append(f"[{i}:v]" + ",".join(chain) + f"[{lbl}]")
         vlabels.append(f"[{lbl}]")
 
+    # T5.2：缺音轨补静音（补齐片段只覆盖片段时长；组间 gap 仍由 T6 统一处理）
+    main_aclips = _fill_missing_audio(vclips, main_aclips)
+
     # T6：提前算视频分组与 gap —— 音频侧据此决定是否统一通道布局
     video_groups = group_clips_by_transition(vclips, valid_transitions)
     has_gap = any(
         video_groups[i + 1][0].in_ - video_groups[i][-1].out > 1e-6
         for i in range(len(video_groups) - 1))
+    # 有 gap 或有补齐静音时，真实音频也要统一 stereo，避免 mono/stereo 混拼下混
+    need_stereo = has_gap or any(c.sourceRef == ANULLSRC_REF for c in main_aclips)
 
     # ---- 主音频逐片段链 ----
+    next_input = len(vclips)
     for j, c in enumerate(main_aclips):
-        idx = len(vclips) + j
-        inputs.append(c.sourceRef)
         lbl = f"ca{j}"
         dur = c.sourceOut - c.sourceIn
+        if c.sourceRef == ANULLSRC_REF:
+            # T5.2：静音片段没有输入文件，直接在 filtergraph 里生成
+            a_parts.append(
+                f"anullsrc=r=48000:cl=stereo,atrim=start=0:end={_fmt_num(dur)},"
+                f"asetpts=PTS-STARTPTS[{lbl}]")
+            alabels.append(f"[{lbl}]")
+            continue
+        idx = next_input
+        next_input += 1
+        inputs.append(c.sourceRef)
         chain = [f"atrim=start={c.sourceIn}:end={c.sourceOut}",
                  "asetpts=PTS-STARTPTS"]
-        if has_gap:
-            # 有 gap 要插静音段：先统一到 stereo。实测 mono/stereo 混拼不会报错，
-            # 但会**静默下混成 mono**（输出 channels=1），属于隐性音质损失。
+        if need_stereo:
+            # 实测 mono/stereo 混拼不会报错，但会**静默下混成 mono**（输出
+            # channels=1），属隐性音质损失 —— 有 gap 或补齐静音时统一 stereo。
             chain.append("aformat=sample_rates=48000:channel_layouts=stereo")
         for e in c.effects or []:
             if (e or {}).get("effectType") == SPEED_MARKER:
@@ -733,7 +789,7 @@ def compile(tl: Timeline) -> Dict[str, Any]:
 
     # ---- BGM 逐片段链（音量/淡入淡出/延时定位）----
     for k, c in enumerate(bgm_clips):
-        idx = len(vclips) + len(main_aclips) + k
+        idx = len(inputs)          # 动态取：补齐的静音片段不占输入位（T5.2）
         inputs.append(c.sourceRef)
         lbl = f"cb{k}"
         dur = c.sourceOut - c.sourceIn

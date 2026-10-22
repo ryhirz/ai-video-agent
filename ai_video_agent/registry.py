@@ -56,24 +56,53 @@ class ParamSpec:
 # 操作类型：与 operations.apply_operation 的 handlers 一一对应
 # ---------------------------------------------------------------------------
 OPERATIONS: Dict[str, Dict[str, Any]] = {
-    "cut":          {"summary": "在时间轴某点切分片段", "payload": ["targetClipId", "at"]},
-    "trim":         {"summary": "裁剪片段头/尾", "payload": ["targetClipId", "in", "out"]},
-    "add_subtitle": {"summary": "添加字幕", "payload": ["text", "start", "end", "style"]},
-    "add_bgm":      {"summary": "添加背景音乐", "payload": ["sourceRef", "in", "out",
-                                                           "volume", "fadeIn", "fadeOut"]},
-    "delete_clip":  {"summary": "删除整个片段", "payload": ["targetClipId"]},
-    "delete_range": {"summary": "按源素材时间区间删除", "payload": ["sourceRef", "start", "end"]},
-    "move_clip":    {"summary": "移动片段轨道/位置", "payload": ["targetClipId", "toTrack",
-                                                                "toIn", "toIndex"]},
-    "transition":   {"summary": "两片段之间的转场", "payload": ["transitionType", "duration",
-                                                               "clips"]},
-    "effect":       {"summary": "给片段挂效果", "payload": ["targetClipId", "effectType",
-                                                           "params"]},
+    # hint：planner 提示词里该操作的一行说明（T7.1 动态渲染的数据源）。
+    # 新增操作时在这里加一条，_SCHEMA_HINT 自动跟上，消除「清单有、提示词没有」的漂移。
+    "cut":          {"summary": "在时间轴某点切分片段", "payload": ["targetClipId", "at"],
+                     "hint": "- cut: {targetClipId, at} —— 在 at 秒把该 clip 切成两段"
+                             "（原 id 消失，改用 __a/__b，见铁律 2）"},
+    "trim":         {"summary": "裁剪片段头/尾", "payload": ["targetClipId", "in", "out"],
+                     "hint": "- trim: {targetClipId, in?, out?} —— 只保留 [in,out] 秒区间"
+                             "（去掉前N秒=in:N；去掉后N秒=out:总时长-N）"},
+    "add_subtitle": {"summary": "添加字幕", "payload": ["text", "start", "end", "style"],
+                     "hint": "- add_subtitle: {text, start, end} —— 叠加字幕"
+                             "（style 可选：font/size/color/bg/position）"},
+    "add_bgm":      {"summary": "添加背景音乐",
+                     "payload": ["sourceRef", "in", "out", "volume", "fadeIn", "fadeOut"],
+                     "hint": "- add_bgm: {sourceRef, in, out, volume?, fadeIn?, fadeOut?}"
+                             " —— 铺背景音乐，与主音频混音（不会盖掉原声）"},
+    "delete_clip":  {"summary": "删除整个片段", "payload": ["targetClipId"],
+                     "hint": "- delete_clip: {targetClipId} —— 删除一个 clip"
+                             "（视频段被删时其配对音频一起删）"},
+    "delete_range": {"summary": "按源素材时间区间删除",
+                     "payload": ["sourceRef", "start", "end"],
+                     "hint": "- delete_range: {start, end} —— 【删除内容推荐写法】"
+                             "按素材绝对秒数删除 [start,end]，视频与其配对音频一起删；"
+                             "不依赖派生 id"},
+    "move_clip":    {"summary": "移动片段轨道/位置",
+                     "payload": ["targetClipId", "toTrack", "toIn", "toIndex"],
+                     "hint": "- move_clip: {targetClipId, toIn?} —— 把片段挪到 toIn 秒处，"
+                             "整条轨会重排为顺序相接"},
+    "transition":   {"summary": "两片段之间的转场",
+                     "payload": ["transitionType", "duration", "clips"],
+                     "hint": "- transition: {transitionType, duration, "
+                             "clips:[前一个id, 后一个id]} —— 片段交界处交叉溶解"
+                             "（视频 xfade / 音频 acrossfade）"},
+    "effect":       {"summary": "给片段挂效果",
+                     "payload": ["targetClipId", "effectType", "params"],
+                     "hint": "- effect: {targetClipId, effectType, params?} —— "
+                             "画面/音频效果（可用 effectType 动态列于此条下方）"},
     "speed":        {"summary": "变速（视频 setpts + 音频 atempo）",
-                     "payload": ["targetClipId", "rate"]},
+                     "payload": ["targetClipId", "rate"],
+                     "hint": "- speed: {targetClipId, rate} —— 变速"
+                             "（视频与配对音频同步；1.0=原速、2.0=二倍速、0.5=半速）"},
     "add_text":     {"summary": "画面上叠加文字（水印/标题）",
                      "payload": ["text", "start", "end", "position", "margin",
-                                 "x", "y", "font", "size", "color", "bg"]},
+                                 "x", "y", "font", "size", "color", "bg"],
+                     "hint": "- add_text: {text, start, end, position?, margin?, "
+                             "x?, y?, font?, size?, color?, bg?} —— 画面文字/水印；"
+                             "九宫格定位（默认 bottom-center），x 和 y 同时非空才覆盖；"
+                             "font 传字体名或字体文件路径"},
 }
 
 @dataclass(frozen=True)
@@ -328,18 +357,28 @@ def capability_manifest() -> Dict[str, Any]:
             "audio_fill": "silence",
             "audio_fill_desc": "组间 gap 处音频侧插入等长静音，与视频 tpad 黑帧同步，保证音画时长一致",
         },
+        # T5.2：缺音轨不再降级，行为在清单里声明
+        "partial_audio_policy": {
+            "video_without_audio": "fill_silence",
+            "audio_without_video": "keep_audio",
+        },
         "subtitle_style": {
             "keys": ["font", "size", "color", "bg", "position"],
         },
         "speed": {
-            "rate": {"default": 1.0, "min": 0.01, "max": 1000,
+            "rate": {"type": "number", "default": 1.0, "min": 0.01, "max": 1000,
                      "description": "变速倍率；1.0 = 原速", "supported": True},
-            "audio_backend": {"default": "atempo", "choices": ["atempo"],
+            "audio_backend": {"type": "string", "default": "atempo",
+                              "choices": ["atempo"],
                               "description": "音频变速后端；rubberband 本机构建可用但未启用",
                               "supported": True},
         },
         "add_text": {
-            "position": {"choices": list(TEXT_POSITIONS), "default": "bottom-center",
+            "text": {"type": "string", "description": "文字内容", "supported": True},
+            "start": {"type": "number", "description": "开始时间（秒）", "supported": True},
+            "end": {"type": "number", "description": "结束时间（秒）", "supported": True},
+            "position": {"type": "string", "choices": list(TEXT_POSITIONS),
+                         "default": "bottom-center",
                          "description": "九宫格锚点；x/y 非空时被覆盖", "supported": True},
             "margin": {"default": 20, "min": 0, "type": "number",
                        "description": "边距像素", "supported": True},
@@ -372,6 +411,63 @@ def capability_manifest() -> Dict[str, Any]:
         },
         "internal_markers": [BGM_MARKER, SPEED_MARKER],
     }
+
+
+def _render_param_line(name: str, spec: Dict[str, Any]) -> str:
+    """把能力段里的单个参数渲染成提示词行（T7.1）。"""
+    ptype = spec.get("type", "any")
+    desc = spec.get("description", "")
+    line = f"  - {name}: {ptype}"
+    if desc:
+        line += f" - {desc}"
+    cons = []
+    if spec.get("min") is not None:
+        cons.append(f"min={spec['min']}")
+    if spec.get("max") is not None:
+        cons.append(f"max={spec['max']}")
+    if spec.get("default") is not None:
+        cons.append(f"default={spec['default']}")
+    if spec.get("choices"):
+        cons.append("enum: " + ", ".join(str(c) for c in spec["choices"]))
+    if cons:
+        line += f" ({', '.join(cons)})"
+    if spec.get("supported") is False:
+        line += " [未落地]"
+    return line
+
+
+def generate_schema_hint() -> str:
+    """动态生成 planner 提示词的「可用操作与字段」段落（T7.1）。
+
+    数据源（全部来自 registry 内存结构，manifest 只是它的导出物，
+    因此不存在「清单文件缺失」的降级路径）：
+    - `OPERATIONS[op]["hint"]`：每个操作的一行说明，新增操作在 registry 加一条即可；
+    - 顶层能力段（speed / add_text / transform）的结构化参数（min/max/default/enum）；
+    - effect 的可用值从 VIDEO_EFFECTS / AUDIO_EFFECTS 动态列出。
+    """
+    manifest = capability_manifest()
+    lines: List[str] = []
+    for op_name, meta in OPERATIONS.items():
+        hint = meta.get("hint")
+        if hint:
+            lines.append(hint)
+        else:  # 兜底：没写 hint 的操作用 summary + 字段名
+            fields = ", ".join(meta.get("payload", []))
+            lines.append(f"- {op_name}: {{{fields}}} —— {meta.get('summary', '')}")
+
+        cap = manifest.get(op_name)
+        if (isinstance(cap, dict) and cap
+                and all(isinstance(v, dict) and "type" in v for v in cap.values())):
+            for pname, pspec in cap.items():
+                lines.append(_render_param_line(pname, pspec))
+
+        if op_name == "effect":
+            lines.append("  - 画面 effectType: " + ", ".join(sorted(VIDEO_EFFECTS)))
+            lines.append("  - 音轨 effectType: " + ", ".join(sorted(AUDIO_EFFECTS)))
+        if op_name == "transition":
+            lines.append("  - transitionType: " + ", ".join(TRANSITION_TYPES)
+                         + "（另支持 fadewhite 淡到白）")
+    return "\n".join(lines)
 
 
 def dump_manifest(path: str) -> str:
