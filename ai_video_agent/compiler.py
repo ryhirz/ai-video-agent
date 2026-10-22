@@ -427,7 +427,7 @@ def _build_audio_chain_with_gaps(af_tail: List[str], base_labels: List[str],
     for i, lbl in enumerate(base_labels):
         if i > 0 and (i - 1) < n_gaps and gaps[i - 1] > 1e-6:
             src, dst = f"as{i - 1}", f"asi{i - 1}"
-            af_tail.append(f"anullsrc=r=48000:cl=mono[{src}]")
+            af_tail.append(f"anullsrc=r=48000:cl=stereo[{src}]")
             af_tail.append(f"[{src}]atrim=start=0:end={_fmt_num(gaps[i - 1])},"
                            f"asetpts=PTS-STARTPTS[{dst}]")
             extended.append(f"[{dst}]")
@@ -493,6 +493,12 @@ def compile(tl: Timeline) -> Dict[str, Any]:
         vid_parts.append(f"[{i}:v]" + ",".join(chain) + f"[{lbl}]")
         vlabels.append(f"[{lbl}]")
 
+    # T6：提前算视频分组与 gap —— 音频侧据此决定是否统一通道布局
+    video_groups = group_clips_by_transition(vclips, valid_transitions)
+    has_gap = any(
+        video_groups[i + 1][0].in_ - video_groups[i][-1].out > 1e-6
+        for i in range(len(video_groups) - 1))
+
     # ---- 主音频逐片段链 ----
     for j, c in enumerate(main_aclips):
         idx = len(vclips) + j
@@ -501,6 +507,10 @@ def compile(tl: Timeline) -> Dict[str, Any]:
         dur = c.sourceOut - c.sourceIn
         chain = [f"atrim=start={c.sourceIn}:end={c.sourceOut}",
                  "asetpts=PTS-STARTPTS"]
+        if has_gap:
+            # 有 gap 要插静音段：先统一到 stereo。实测 mono/stereo 混拼不会报错，
+            # 但会**静默下混成 mono**（输出 channels=1），属于隐性音质损失。
+            chain.append("aformat=sample_rates=48000:channel_layouts=stereo")
         for e in c.effects or []:
             f = audio_effect_filter(e, dur)
             if f:
@@ -535,7 +545,7 @@ def compile(tl: Timeline) -> Dict[str, Any]:
 
     # ---- 视频拼接（T5）：按转场分组；组内链式 xfade，组间 concat ----
     vmap = ""
-    video_groups = group_clips_by_transition(vclips, valid_transitions)
+    # video_groups 已在音频链之前算好（供 has_gap 判断），这里直接复用
     label_of = {c.id: f"cv{i}" for i, c in enumerate(vclips)}
     if len(vclips) == 1:
         vf_tail.append(f"{vlabels[0]}null[vout]")

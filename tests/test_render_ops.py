@@ -261,6 +261,15 @@ class TestRenderedEffectIsReal(unittest.TestCase):
             f"音频时长({a_dur:.2f}s) < 视频时长({v_dur:.2f}s)，音画不同步！"
             f"gap 静音可能未插入")
 
+        # 通道：有 gap 时统一 stereo。mono/stereo 混拼不会报错，但会被静默下混成
+        # mono（实测输出 channels=1），属隐性音质损失，必须拦。
+        r = subprocess.run(
+            [_ffprobe(), "-v", "error", "-select_streams", "a",
+             "-show_entries", "stream=channels", "-of", "json", p],
+            capture_output=True, text=True)
+        ch = json.loads(r.stdout)["streams"][0]["channels"]
+        self.assertEqual(ch, 2, f"gap 场景音频应统一为 stereo，实际 {ch} 声道")
+
     def test_bgm_is_really_mixed_into_the_audio(self) -> None:
         p = self._render(OP_CASES["add_bgm"], "bgm")
         d = _pcm_diff(_pcm(p), _pcm(str(self.base)))
