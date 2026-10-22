@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from .timeline import Timeline, Clip, Transition
@@ -48,6 +49,26 @@ def _ass_time(sec: float) -> str:
     m = int((sec % 3600) // 60)
     s = sec % 60
     return f"{h:d}:{m:02d}:{s:05.2f}"
+
+
+def _ass_color(value: Any) -> Optional[str]:
+    """#RRGGBB 或 rgb()/rgba() -> ASS 的 AABBGGRR（不含 &H 前缀）。
+
+    ASS 的 alpha 与 CSS 相反：00 = 不透明，FF = 全透明。
+    """
+    v = str(value or "").strip()
+    if not v:
+        return None
+    if v.startswith("#") and len(v) == 7:
+        r, g, b = v[1:3], v[3:5], v[5:7]
+        return f"00{b}{g}{r}".upper()
+    m = re.match(r"rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+)\s*)?\)", v)
+    if m:
+        r, g, b = (int(m.group(i)) for i in (1, 2, 3))
+        a = float(m.group(4)) if m.group(4) is not None else 1.0
+        alpha = int(round((1.0 - max(0.0, min(1.0, a))) * 255))
+        return f"{alpha:02X}{b:02X}{g:02X}{r:02X}"
+    return None
 
 
 def _num(params: Dict[str, Any], names: Tuple[str, ...], default: float) -> float:
@@ -205,10 +226,24 @@ def build_ass_content(tl: Timeline) -> str:
     ]
     for s in tl.subtitles:
         style = s.style or {}
-        an = POS_MAP.get(style.get("position", "bottom-center"), "\\an2")
+        tags = [POS_MAP.get(style.get("position", "bottom-center"), "\\an2")]
+        # T6：样式覆盖（font / size / color / bg）。缺省时保持 ASS 全局样式不变。
+        if style.get("font"):
+            tags.append(f"\\fn{style['font']}")
+        if style.get("size"):
+            tags.append(f"\\fs{int(float(style['size']))}")
+        fg = _ass_color(style.get("color"))
+        if fg:
+            tags.append(f"\\c&H{fg}&")
+        bg = _ass_color(style.get("bg"))
+        if bg:
+            tags.append(f"\\4c&H{bg}&")
+            tags.append("\\bord4")     # BorderStyle=1 下用边框近似底色块
         text = s.text.replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}")
         # 覆盖标签必须用 {} 包裹，否则 \an2 会被当成普通文字显示出来
-        lines.append(f"Dialogue: 0,{_ass_time(s.start)},{_ass_time(s.end)},Default,,0,0,0,,{{{an}}}{text}")
+        lines.append(
+            f"Dialogue: 0,{_ass_time(s.start)},{_ass_time(s.end)},Default,,0,0,0,,"
+            f"{{{''.join(tags)}}}{text}")
     return "\n".join(lines)
 
 
@@ -261,6 +296,47 @@ def xfade_total_duration(clips: List[Clip],
         pair = list(tr.attachedClips or [])
         if len(pair) == 2 and all(i in ids for i in pair):
             total -= float(tr.duration)
+    return total
+
+
+def _valid_transitions(tl: Timeline,
+                       unsupported: Optional[List[str]] = None) -> List[Transition]:
+    """过滤出「引用完整 + 时长合法」的转场；非法项按需记入 unsupported。"""
+    live = {c.id: c for c in tl.clips}
+
+    def _bad(msg: str) -> None:
+        if unsupported is not None:
+            unsupported.append(msg)
+
+    out: List[Transition] = []
+    for tr in tl.transitions:
+        ids = list(tr.attachedClips or [])
+        if len(ids) != 2 or any(i not in live for i in ids):
+            _bad(f"转场 `{tr.id}` 引用的片段不存在或数量不为 2，已忽略")
+            continue
+        dur_a = _stream_dur(live[ids[0]])
+        d = float(tr.duration)
+        if dur_a <= 0 or d <= 0 or d >= dur_a:
+            _bad(f"转场 `{tr.id}` 时长 {d:g}s 不合法"
+                 f"（片段 `{ids[0]}` 流时长 {dur_a:g}s），已忽略并退化为硬切")
+            continue
+        out.append(tr)
+    return out
+
+
+def compiled_duration(tl: Timeline) -> float:
+    """成片时长 = Σ片段流时长 − Σ有效转场时长 + Σ组间 gap（方案 A）。"""
+    vclips = sorted([c for c in tl.clips if _track_type(tl, c) == "video"],
+                    key=lambda c: c.in_)
+    if not vclips:
+        return 0.0
+    trans = _valid_transitions(tl)
+    total = sum(_stream_dur(c) for c in vclips) - sum(float(t.duration) for t in trans)
+    groups = group_clips_by_transition(vclips, trans)
+    for g1, g2 in zip(groups, groups[1:]):
+        gap = g2[0].in_ - g1[-1].out
+        if gap > 1e-6:
+            total += gap
     return total
 
 
@@ -349,23 +425,7 @@ def compile(tl: Timeline) -> Dict[str, Any]:
     bgm_clips = [c for c in aclips if id(c) in bgm_ids]
 
     # 转场（T5）：只保留「引用完整 + 时长合法」的；其余显式记 unsupported（不静默）
-    live_ids = {c.id for c in tl.clips}
-    clip_by_id = {c.id: c for c in tl.clips}
-    valid_transitions: List[Transition] = []
-    for tr in tl.transitions:
-        ids = list(tr.attachedClips or [])
-        if len(ids) != 2 or any(i not in live_ids for i in ids):
-            unsupported.append(
-                f"转场 `{tr.id}` 引用的片段不存在或数量不为 2，已忽略")
-            continue
-        dur_a = _stream_dur(clip_by_id[ids[0]])
-        d = float(tr.duration)
-        if dur_a <= 0 or d <= 0 or d >= dur_a:
-            unsupported.append(
-                f"转场 `{tr.id}` 时长 {d:g}s 不合法"
-                f"（片段 `{ids[0]}` 流时长 {dur_a:g}s），已忽略并退化为硬切")
-            continue
-        valid_transitions.append(tr)
+    valid_transitions = _valid_transitions(tl, unsupported)
 
     inputs: List[str] = []
     vid_parts: List[str] = []       # 视频逐片段链
@@ -469,6 +529,15 @@ def compile(tl: Timeline) -> Dict[str, Any]:
                 cur = out
                 acc = acc + _stream_dur(nxt) - d
             group_labels.append(f"[{cur}]")
+        # T6 方案 A：组间 gap 用 tpad 补黑帧；组内（含转场组内部）一律不插
+        for gi in range(len(video_groups) - 1):
+            gap = video_groups[gi + 1][0].in_ - video_groups[gi][-1].out
+            if gap > 1e-6:
+                lbl = f"gp{gi}"
+                vf_tail.append(
+                    f"{group_labels[gi]}tpad=stop_mode=add:"
+                    f"stop_duration={_fmt_num(gap)}:color=black[{lbl}]")
+                group_labels[gi] = f"[{lbl}]"
         if len(group_labels) == 1:
             vf_tail.append(f"{group_labels[0]}null[vout]")
         else:

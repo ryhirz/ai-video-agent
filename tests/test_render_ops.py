@@ -199,6 +199,26 @@ class TestRenderedEffectIsReal(unittest.TestCase):
         p = self._render(OP_CASES["transition"], "trans_smoke")
         self.assertGreater(Path(p).stat().st_size, 0)
 
+    def test_gap_fills_black_frames(self) -> None:
+        """T6 冒烟：片段间 gap 用 tpad 补黑帧，且 tpad 参数被真实 ffmpeg 接受。
+
+        直接构造带 gap 的 timeline（A 0–1s，B 2.5–3.5s），避开 move_clip 的越界校验。
+        """
+        tl = Timeline(
+            metadata=Metadata(schemaVersion="1.0.0", fps=30,
+                              resolution={"w": W, "h": H}, duration=4.0),
+            tracks=[Track("v_main", "video")],
+            clips=[
+                Clip("a", "v_main", str(self.src), 0.0, 1.0, 0.0, 1.0),
+                Clip("b", "v_main", str(self.src), 2.5, 3.5, 1.0, 2.0),
+            ],
+        )
+        p, msg = render(tl, base_dir=str(self.dir / "gap"))
+        self.assertIsNotNone(p, f"gap 渲染失败：{msg}")
+        px = _pixel(p, 1.5)           # gap 区间 1.0–2.5
+        self.assertIsNotNone(px)
+        self.assertLess(sum(px), 100, f"gap 应为黑帧：{px}")
+
     def test_bgm_is_really_mixed_into_the_audio(self) -> None:
         p = self._render(OP_CASES["add_bgm"], "bgm")
         d = _pcm_diff(_pcm(p), _pcm(str(self.base)))

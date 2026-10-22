@@ -39,6 +39,19 @@
     "duration_too_long": "reject_at_validate",
     "audio_track_missing": "skip_audio_transition_with_warning"
   },
+  "gap_policy": {
+    "fill": "tpad_black",
+    "scope": "between_groups_only"
+  },
+  "subtitle_style": {
+    "keys": [
+      "font",
+      "size",
+      "color",
+      "bg",
+      "position"
+    ]
+  },
   "transform": {
     "x": {
       "default": 0,

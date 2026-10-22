@@ -284,6 +284,14 @@ def capability_manifest() -> Dict[str, Any]:
             "duration_too_long": "reject_at_validate",
             "audio_track_missing": "skip_audio_transition_with_warning",
         },
+        # T6：gap 只在「无转场的组间」补黑帧；字幕样式可覆盖的字段
+        "gap_policy": {
+            "fill": "tpad_black",
+            "scope": "between_groups_only",
+        },
+        "subtitle_style": {
+            "keys": ["font", "size", "color", "bg", "position"],
+        },
         "transform": {name: spec.to_dict() for name, spec in TRANSFORM_PARAMS.items()},
         "effects": {
             "video": {s.canonical: s.to_dict() for s in VIDEO_EFFECT_SPECS.values()},
