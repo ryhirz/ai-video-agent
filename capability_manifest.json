@@ -1,0 +1,183 @@
+{
+  "schema_version": "1.0.0",
+  "operations": [
+    "add_bgm",
+    "add_subtitle",
+    "cut",
+    "delete_clip",
+    "delete_range",
+    "effect",
+    "move_clip",
+    "transition",
+    "trim"
+  ],
+  "transition_types": [
+    "fade",
+    "cross",
+    "wipe"
+  ],
+  "effects": {
+    "video": {
+      "grayscale": {
+        "kind": "simple",
+        "aliases": [
+          "灰度",
+          "黑白"
+        ],
+        "filter": "hue=s=0"
+      },
+      "sepia": {
+        "kind": "simple",
+        "aliases": [
+          "复古"
+        ],
+        "filter": "colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131"
+      },
+      "invert": {
+        "kind": "simple",
+        "aliases": [
+          "反色"
+        ],
+        "filter": "negate"
+      },
+      "mirror": {
+        "kind": "simple",
+        "aliases": [
+          "hflip",
+          "水平翻转"
+        ],
+        "filter": "hflip"
+      },
+      "vflip": {
+        "kind": "simple",
+        "aliases": [
+          "垂直翻转"
+        ],
+        "filter": "vflip"
+      },
+      "blur": {
+        "kind": "param",
+        "aliases": [
+          "模糊"
+        ],
+        "filter_template": "{v}",
+        "params": {
+          "radius": {
+            "default": 5,
+            "min": 0,
+            "max": 50
+          }
+        }
+      },
+      "brightness": {
+        "kind": "param",
+        "aliases": [
+          "亮度"
+        ],
+        "filter_template": "brightness={v}",
+        "params": {
+          "value": {
+            "default": 0.1,
+            "min": -1,
+            "max": 1
+          }
+        }
+      },
+      "contrast": {
+        "kind": "param",
+        "aliases": [
+          "对比度"
+        ],
+        "filter_template": "contrast={v}",
+        "params": {
+          "value": {
+            "default": 1.5,
+            "min": 0,
+            "max": 2
+          }
+        }
+      },
+      "saturation": {
+        "kind": "param",
+        "aliases": [
+          "饱和度"
+        ],
+        "filter_template": "saturation={v}",
+        "params": {
+          "value": {
+            "default": 1.5,
+            "min": 0,
+            "max": 2
+          }
+        }
+      },
+      "fade_in": {
+        "kind": "fade",
+        "aliases": [
+          "淡入"
+        ],
+        "params": {
+          "duration": {
+            "min": 0,
+            "max": 60
+          }
+        }
+      },
+      "fade_out": {
+        "kind": "fade",
+        "aliases": [
+          "淡出"
+        ],
+        "params": {
+          "duration": {
+            "min": 0,
+            "max": 60
+          }
+        }
+      }
+    },
+    "audio": {
+      "volume": {
+        "kind": "param",
+        "aliases": [
+          "音量"
+        ],
+        "filter_template": "volume={v}",
+        "params": {
+          "value": {
+            "default": 1.0,
+            "min": 0,
+            "max": 2
+          }
+        }
+      },
+      "fade_in": {
+        "kind": "fade",
+        "aliases": [
+          "淡入"
+        ],
+        "params": {
+          "duration": {
+            "min": 0,
+            "max": 60
+          }
+        }
+      },
+      "fade_out": {
+        "kind": "fade",
+        "aliases": [
+          "淡出"
+        ],
+        "params": {
+          "duration": {
+            "min": 0,
+            "max": 60
+          }
+        }
+      }
+    }
+  },
+  "internal_markers": [
+    "bgm_mix"
+  ]
+}

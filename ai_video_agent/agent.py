@@ -426,6 +426,42 @@ def facts_block(index: Optional[FootageIndex]) -> str:
     return "\n".join(f"- {x}" for x in lines)
 
 
+def capability_block() -> str:
+    """能力清单（由 registry 导出，**禁止手写**）。
+
+    为什么必须进提示词：模型只有知道"系统真的支持什么"，才不会幻觉出不存在的
+    effectType / 操作；而清单由代码导出，才不会与编译器漂移（历史 Bug Q 的根因）。
+    """
+    from .registry import (AUDIO_EFFECT_SPECS, OPERATIONS, TRANSITION_TYPES,
+                           VIDEO_EFFECT_SPECS)
+
+    def _names(specs) -> str:
+        return " / ".join(s.canonical for s in specs.values())
+
+    def _params(specs) -> str:
+        parts = []
+        for s in specs.values():
+            if s.kind == "param" and s.param is not None:
+                rng = []
+                if s.param.min is not None:
+                    rng.append(f"min={s.param.min}")
+                if s.param.max is not None:
+                    rng.append(f"max={s.param.max}")
+                parts.append(f"{s.canonical}.{s.param_name}" +
+                             (f"({', '.join(rng)})" if rng else ""))
+        return "；".join(parts) or "（无）"
+
+    return "\n".join([
+        "- 操作类型：" + " / ".join(sorted(OPERATIONS)),
+        "- 画面效果：" + _names(VIDEO_EFFECT_SPECS),
+        "- 画面效果参数域：" + _params(VIDEO_EFFECT_SPECS),
+        "- 音轨效果：" + _names(AUDIO_EFFECT_SPECS),
+        "- 音轨效果参数域：" + _params(AUDIO_EFFECT_SPECS),
+        "- 转场类型：" + " / ".join(TRANSITION_TYPES),
+        "- 不在此清单内的操作/效果一律不可用；无法表达时输出 []。",
+    ])
+
+
 # ---------------------------------------------------------------------------
 # 3) 真实 LLM Planner（热插拔点）
 # ---------------------------------------------------------------------------
@@ -506,6 +542,7 @@ class JsonPlanner:
                      index: Optional[FootageIndex] = None) -> str:
         return (
             f"{self._SCHEMA_HINT}\n\n"
+            f"【可用能力清单（由系统导出，只能用这里的值）】\n{capability_block()}\n\n"
             f"【当前 Timeline（targetClipId 只能取这里列出的 id）】\n{timeline_digest(timeline)}\n\n"
             f"【当前 Timeline 原始 JSON】\n{timeline.dumps()}\n\n"
             f"【素材理解事实（M2）】\n{facts_block(index)}\n\n"

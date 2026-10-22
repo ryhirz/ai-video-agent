@@ -17,45 +17,21 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 
 from .timeline import Timeline, Clip
+from .registry import (  # 单一真相：编译 / 校验 / 能力清单共用 registry 的表
+    AUDIO_EFFECTS,
+    BGM_MARKER,
+    VIDEO_EFFECTS,
+    PARAM_VIDEO_EFFECTS as _PARAM_VIDEO_EFFECTS,
+    SIMPLE_VIDEO_EFFECTS as _SIMPLE_VIDEO_EFFECTS,
+)
 
 POS_MAP = {
     "bottom-center": "\\an2", "bottom-left": "\\an1", "bottom-right": "\\an3",
     "top-center": "\\an8", "top-left": "\\an7", "top-right": "\\an9", "center": "\\an5",
 }
 
-# ---------------------------------------------------------------------------
-# 效果词表
-# ---------------------------------------------------------------------------
-# 画面效果：固定滤镜
-_SIMPLE_VIDEO_EFFECTS = {
-    "grayscale": "hue=s=0", "灰度": "hue=s=0", "黑白": "hue=s=0",
-    "sepia": "colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131",
-    "复古": "colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131",
-    "invert": "negate", "反色": "negate",
-    "mirror": "hflip", "hflip": "hflip", "水平翻转": "hflip",
-    "vflip": "vflip", "垂直翻转": "vflip",
-}
-# 画面效果：需要参数（value / radius）
-_PARAM_VIDEO_EFFECTS = {
-    "blur": ("boxblur", "radius", 5, "{v}"),
-    "模糊": ("boxblur", "radius", 5, "{v}"),
-    "brightness": ("eq", "value", 0.1, "brightness={v}"),
-    "亮度": ("eq", "value", 0.1, "brightness={v}"),
-    "contrast": ("eq", "value", 1.5, "contrast={v}"),
-    "对比度": ("eq", "value", 1.5, "contrast={v}"),
-    "saturation": ("eq", "value", 1.5, "saturation={v}"),
-    "饱和度": ("eq", "value", 1.5, "saturation={v}"),
-}
-VIDEO_EFFECTS: Tuple[str, ...] = tuple(
-    sorted(set(_SIMPLE_VIDEO_EFFECTS) | set(_PARAM_VIDEO_EFFECTS)
-           | {"fade_in", "淡入", "fade_out", "淡出"}))
-
-# 音频效果（作用在音轨 clip 上）
-AUDIO_EFFECTS: Tuple[str, ...] = (
-    "volume", "音量", "fade_in", "淡入", "fade_out", "淡出")
-
-# add_bgm 在 clip 上打的内部标记（不是画面效果，编译器单独处理）
-BGM_MARKER = "bgm_mix"
+# 效果词表已收敛到 registry.py（原 _SIMPLE_VIDEO_EFFECTS / _PARAM_VIDEO_EFFECTS /
+# VIDEO_EFFECTS / AUDIO_EFFECTS 的本地定义已删除），此处仅导入，行为完全不变。
 
 
 def _track_type(tl: Timeline, c: Clip) -> str:

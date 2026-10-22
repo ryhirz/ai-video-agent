@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .timeline import Timeline, Clip, Subtitle, Track, Transition
 from .compiler import AUDIO_EFFECTS, BGM_MARKER, VIDEO_EFFECTS
+from .registry import TRANSITION_TYPES, resolve_effect
 
 
 class OperationError(RuntimeError):
@@ -55,21 +56,151 @@ def apply_operation(tl: Timeline, op: Dict[str, Any]) -> Timeline:
     t = tl.copy()
     typ = op["type"]
     p = op.get("payload", {})
-    handlers = {
-        "cut": _apply_cut,
-        "trim": _apply_trim,
-        "add_subtitle": _apply_subtitle,
-        "add_bgm": _apply_bgm,
-        "delete_clip": _apply_delete,
-        "delete_range": _apply_delete_range,
-        "move_clip": _apply_move,
-        "transition": _apply_transition,
-        "effect": _apply_effect,
-    }
-    if typ not in handlers:
+    # 分派表在模块末尾定义（依赖 _apply_* 函数）；运行时查找即可。
+    # 对外可读，供 registry 一致性测试做双向断言。
+    if typ not in OPERATION_HANDLERS:
         raise ValueError(f"UnsupportedOperationError: {typ}")
-    handlers[typ](t, p)
+    OPERATION_HANDLERS[typ](t, p)
     return t
+
+
+# ===========================================================================
+# 前置校验（T3）：在动 Timeline 之前，拦下「必然越界 / 必然失败」的操作
+# ===========================================================================
+def _err(op: Any, idx: int, field: str, reason: str) -> Dict[str, Any]:
+    """结构化错误，与契约 §3.4 出错定位协议同构。"""
+    return {
+        "stage": "validate",
+        "opId": (op.get("id") if isinstance(op, dict) else None) or f"#{idx}",
+        "type": (op.get("type") if isinstance(op, dict) else None),
+        "field": field,
+        "reason": reason,
+    }
+
+
+def _is_num(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _check_effect(tl: Optional[Timeline], op: Dict[str, Any],
+                  idx: int) -> List[Dict[str, Any]]:
+    """效果名校验 + 参数域校验（参数域来自 registry，单一真相）。"""
+    p = op.get("payload") or {}
+    et = p.get("effectType")
+    if not et:
+        return [_err(op, idx, "payload.effectType", "缺少 effectType")]
+
+    # 能定位到目标 clip 时按轨道判定音/视频；定位不到则两边都试
+    audio: Optional[bool] = None
+    cid = p.get("targetClipId")
+    if tl is not None and cid:
+        c = next((x for x in tl.clips if x.id == cid), None)
+        if c is not None:
+            audio = _track_type(tl, c) == "audio"
+
+    if audio is None:
+        spec = resolve_effect(str(et), audio=False) or resolve_effect(str(et), audio=True)
+    else:
+        spec = resolve_effect(str(et), audio=audio)
+    if spec is None:
+        allowed = AUDIO_EFFECTS if audio else VIDEO_EFFECTS
+        return [_err(op, idx, "payload.effectType",
+                     f"不支持的效果 `{et}`；可用：{list(allowed)}")]
+
+    errs: List[Dict[str, Any]] = []
+    if spec.kind == "param" and spec.param is not None:
+        params = p.get("params") or {}
+        v = params.get(spec.param_name, params.get("value", spec.param.default))
+        field = f"payload.params.{spec.param_name}"
+        if not _is_num(v):
+            errs.append(_err(op, idx, field, f"必须是数字，收到 {v!r}"))
+        else:
+            if spec.param.min is not None and v < spec.param.min:
+                errs.append(_err(op, idx, field, f"{v} 小于下限 {spec.param.min}"))
+            if spec.param.max is not None and v > spec.param.max:
+                errs.append(_err(op, idx, field, f"{v} 超过上限 {spec.param.max}"))
+    return errs
+
+
+def validate_ops(tl: Optional[Timeline],
+                 ops: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """前置校验（纯函数：不修改 Timeline、不执行任何操作）。
+
+    返回结构化错误列表；**空列表 = 通过**。每条错误形如：
+        {"stage": "validate", "opId": "op_1", "type": "effect",
+         "field": "payload.params.saturation", "reason": "5 超过上限 2"}
+
+    覆盖：未知操作类型、效果参数越界、切点越界、in/out 非法、转场参数非法、
+    BGM 音量/淡变越界、字幕时间非法。
+    """
+    errors: List[Dict[str, Any]] = []
+    for i, op in enumerate(ops or [], 1):
+        if not isinstance(op, dict):
+            errors.append(_err(op, i, "op", f"操作必须是对象，收到 {type(op).__name__}"))
+            continue
+        typ = op.get("type")
+        if not typ:
+            errors.append(_err(op, i, "type", "缺少 type"))
+            continue
+        if typ not in OPERATION_HANDLERS:
+            errors.append(_err(op, i, "type", f"不支持的操作类型 `{typ}`"))
+            continue
+        p = op.get("payload")
+        if not isinstance(p, dict):
+            errors.append(_err(op, i, "payload", "payload 必须是对象"))
+            continue
+
+        if typ == "effect":
+            errors.extend(_check_effect(tl, op, i))
+        elif typ == "cut":
+            at = p.get("at")
+            if not _is_num(at):
+                errors.append(_err(op, i, "payload.at", f"必须是数字，收到 {at!r}"))
+            elif tl is not None:
+                c = next((x for x in tl.clips if x.id == p.get("targetClipId")), None)
+                if c is not None and not (c.in_ < at < c.out):
+                    errors.append(_err(op, i, "payload.at",
+                                       f"{at} 不在片段 ({c.in_}, {c.out}) 开区间内"))
+        elif typ == "trim":
+            lo, hi = p.get("in"), p.get("out")
+            if lo is None and hi is None:
+                errors.append(_err(op, i, "payload", "in / out 至少提供一个"))
+            for name, v in (("in", lo), ("out", hi)):
+                if v is not None and not _is_num(v):
+                    errors.append(_err(op, i, f"payload.{name}", f"必须是数字，收到 {v!r}"))
+            if _is_num(lo) and _is_num(hi) and lo >= hi:
+                errors.append(_err(op, i, "payload.in", f"in({lo}) 必须小于 out({hi})"))
+        elif typ == "transition":
+            tt, d, clips = p.get("transitionType"), p.get("duration"), p.get("clips")
+            if tt not in TRANSITION_TYPES:
+                errors.append(_err(op, i, "payload.transitionType",
+                                   f"不支持 `{tt}`；可用：{list(TRANSITION_TYPES)}"))
+            if not _is_num(d) or d <= 0:
+                errors.append(_err(op, i, "payload.duration", f"必须 > 0，收到 {d!r}"))
+            if not isinstance(clips, (list, tuple)) or len(clips) != 2:
+                errors.append(_err(op, i, "payload.clips", "必须是长度为 2 的数组"))
+        elif typ == "add_bgm":
+            lo, hi = p.get("in"), p.get("out")
+            vol = p.get("volume", 1.0)
+            fi = p.get("fadeIn", 0) or 0
+            fo = p.get("fadeOut", 0) or 0
+            if not (_is_num(lo) and _is_num(hi)) or lo >= hi:
+                errors.append(_err(op, i, "payload.in",
+                                   f"需满足 in < out，收到 {lo!r} / {hi!r}"))
+            if not _is_num(vol) or not (0 <= vol <= 2):
+                errors.append(_err(op, i, "payload.volume", f"需在 [0,2]，收到 {vol!r}"))
+            if all(_is_num(x) for x in (lo, hi, fi, fo)) and fi + fo > (hi - lo):
+                errors.append(_err(op, i, "payload.fadeIn",
+                                   f"淡入+淡出({fi + fo}s) 超过片段时长({hi - lo}s)"))
+        elif typ == "add_subtitle":
+            s, e = p.get("start"), p.get("end")
+            if not (_is_num(s) and _is_num(e)):
+                errors.append(_err(op, i, "payload.start",
+                                   f"start/end 必须是数字，收到 {s!r} / {e!r}"))
+            elif s < 0 or s >= e:
+                errors.append(_err(op, i, "payload.start",
+                                   f"需满足 0 <= start < end，收到 {s} / {e}"))
+    return errors
 
 
 # ===========================================================================
@@ -280,6 +411,14 @@ def apply_operations(tl: Timeline, ops: List[Dict[str, Any]], *, strict: bool = 
                 raise
             warns.append(f"{i}. `{typ}` 已跳过：{e}")
             continue
+        v_errs = validate_ops(cur, [fixed])
+        if v_errs:
+            msg = "；".join(e["reason"] for e in v_errs)
+            if strict:
+                raise OperationError(f"第 {i} 条 `{typ}` 校验失败：{msg}")
+            warns.append(f"{i}. `{typ}` 已跳过（校验失败）：{msg}")
+            continue
+
         try:
             cur = apply_operation(cur, fixed)
         except Exception as e:  # noqa: BLE001 —— 单条失败不拖垮整批
@@ -565,3 +704,21 @@ def _apply_effect(t: Timeline, p: Dict[str, Any]) -> None:
             f"effect: 不支持的效果 `{et}`（{'音轨' if _track_type(t, c) == 'audio' else '画面'}"
             f"可用：{list(known)}）")
     c.effects.append({"effectType": et, "params": p.get("params", {})})
+
+
+# ---------------------------------------------------------------------------
+# 操作类型 -> 处理函数
+# ---------------------------------------------------------------------------
+# 模块级而非 apply_operation 内部的局部字典：让 registry 一致性测试能直接断言
+# 「能力清单里的操作」与「真的能执行的操作」是同一个集合（双向、动态，非抄写）。
+OPERATION_HANDLERS = {
+    "cut": _apply_cut,
+    "trim": _apply_trim,
+    "add_subtitle": _apply_subtitle,
+    "add_bgm": _apply_bgm,
+    "delete_clip": _apply_delete,
+    "delete_range": _apply_delete_range,
+    "move_clip": _apply_move,
+    "transition": _apply_transition,
+    "effect": _apply_effect,
+}
