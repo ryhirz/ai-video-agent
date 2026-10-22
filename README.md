@@ -8,7 +8,7 @@
 > 用自然语言指挥视频剪辑：从**素材理解 → 操作规划 → 事实校验 → 真实出片**的全链路本地智能体。
 
 输入一句话，例如「删掉有公交车的片段」「把字幕改成竖屏 9:16」，系统自动规划剪辑操作、调用 ffmpeg 出片。
-配套 **163 个单元测试** 与 **22 个可复跑验收脚本**，并有 14 页汇报 PPT。
+配套 **306 个单元测试**（含 6 项端到端验收）与 **9 个确定性验收脚本**，并有 14 页汇报 PPT。
 
 ---
 
@@ -20,6 +20,7 @@
 | 语义删除 | 按**画面**（YOLO 目标检测）与**台词**（ASR 语音转写）定位并删除对应片段 |
 | 确定性事实核对 | 把模型「漏删 / 多删」从幻觉里揪出来，并用可计算的精确结果**自动纠正** |
 | 常用剪辑操作 | 切分、删除、拼接、竖屏 / 横屏适配、字幕处理 |
+| 时间线精修 | **真转场**（xfade/acrossfade 交叉溶解）、**变速**（音画同步，0.01~1000x）、**文字水印**（drawtext，九宫格定位）、**裁剪**（支持占比写法）、组间空隙自动补黑帧 + 静音 |
 | 全链路本地可跑 | 不依赖云端；可选接入本地 LLM（如 Qwen3）走智能规划 |
 
 ## 快速开始
@@ -90,14 +91,15 @@ ai-video-agent/
 ## 测试与验收
 
 ```bash
-# 单元测试（完整环境应为 163 passed + 27 subtests）
+# 单元测试（完整环境应为 306 passed + 29 subtests）
 .venv\Scripts\python.exe -m pytest tests -q
 
 # 确定性验收脚本（离线，9 个，应为 GATES PASSED=9 FAILED=0）
 bash _verify/_run_gates.sh
 ```
 
-- 单元测试分布：`test_agent`(43) · `test_robust_ops`(33) · `test_understand`(29) · `test_ui`(28) · `test_contract`(14) · `test_render_ops`(9) · `test_render`(3) · `test_ingest`(3) · `test_pipeline`(1)
+- 单元测试 19 个文件共 306 用例；头部：`test_agent`(43) · `test_robust_ops`(33) · `test_understand`(29) · `test_ui`(28) · `test_transform_compile`(23) · `test_validate_ops`(20)
+- 端到端验收：`test_e2e_acceptance`(6) —— cut→变速→转场→灰度→裁剪→水印→字幕 全链路真实渲染
 - 基础环境（未装 AI 依赖）下，2 个 YOLO 真实检测用例会**优雅跳过**而非报错
 
 ## 文档索引
@@ -120,7 +122,7 @@ bash _verify/_run_gates.sh
 
 | 项 | 说明 |
 |---|---|
-| `transform.x / y` | **等尺寸画布内偏移**：x>0 时画面右移、右侧超出部分被裁、左侧补黑。不是"整体平移且内容不丢"；负值不支持（ffmpeg `pad` 限制），待 `crop` 路径补齐。若需要**无损平移**，建议走 `crop` + 位移组合路径（T7 规划中）。 |
+| `transform.x / y` | **等尺寸画布内偏移**：x>0 时画面右移、右侧超出部分被裁、左侧补黑。不是"整体平移且内容不丢"；负值不支持（ffmpeg `pad` 限制）。若需要**裁掉画面区域 / 无损取景**，直接用 `transform.crop`（已落地，支持占比写法如 `w: 0.8`）。 |
 | `transform.rotation` | 单位为**弧度**（`rotate` 滤镜原生单位）。契约 v1.0.0 文档写"度"，代码已按弧度实现，契约待升版同步。 |
 | `transform.scale` | **planned**：契约有该字段，但当前由输出归一化 `scale=W:H` 接管，尚未单独编译；`capability_manifest.json` 中该参数标 `supported: false`，显式设非默认值会被校验拒绝。 |
 | 旋转视觉 | `rotate` 默认黑底，旋转后四角进黑边；小角度可接受，大角度或非 90° 整数倍会明显露黑角。 |
