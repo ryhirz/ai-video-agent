@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 MANIFEST_VERSION = "1.0.0"
 
@@ -23,11 +23,13 @@ MANIFEST_VERSION = "1.0.0"
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class ParamSpec:
-    """一个效果参数的合法域。数值型 default 必须落在 [min, max] 内。"""
+    """一个参数的合法域。数值型 default 必须落在 [min, max] 内。"""
 
     default: Any = None
     min: Optional[float] = None
     max: Optional[float] = None
+    description: str = ""
+    type: str = "number"          # number | string（rotation 允许含 t 的表达式）
 
     def to_dict(self) -> Dict[str, Any]:
         d: Dict[str, Any] = {}
@@ -37,6 +39,9 @@ class ParamSpec:
             d["min"] = self.min
         if self.max is not None:
             d["max"] = self.max
+        if self.description:
+            d["description"] = self.description
+        d["type"] = self.type
         return d
 
 
@@ -60,6 +65,50 @@ OPERATIONS: Dict[str, Dict[str, Any]] = {
 }
 
 TRANSITION_TYPES: Tuple[str, ...] = ("fade", "cross", "wipe")
+
+
+# ---------------------------------------------------------------------------
+# transform（几何 / 透明度）：compiler 映射为 pad / rotate / colorchannelmixer
+# ---------------------------------------------------------------------------
+TRANSFORM_PARAMS: Dict[str, ParamSpec] = {
+    "x": ParamSpec(0, None, None, "水平偏移像素（pad 的 x；ffmpeg pad 不支持负值）", "number"),
+    "y": ParamSpec(0, None, None, "垂直偏移像素（pad 的 y；ffmpeg pad 不支持负值）", "number"),
+    "scale": ParamSpec(1.0, None, None, "缩放倍数（1.0 = 原始尺寸）", "number"),
+    "rotation": ParamSpec(0, None, None,
+                          "旋转弧度（rad）；可传数值，或含 t 的表达式", "number"),
+    "opacity": ParamSpec(1.0, 0.0, 1.0, "画面透明度", "number"),
+}
+
+
+def validate_transform(values: Dict[str, Any]) -> List[str]:
+    """校验 transform 取值；返回错误列表（空 = 通过）。
+
+    rotation 允许两种形态：数值（弧度）、或含 t 的表达式字符串（如 "0.5*t"）。
+    其余字段必须是数字。
+    """
+    errs: List[str] = []
+    v = values or {}
+    for name, spec in TRANSFORM_PARAMS.items():
+        raw = v.get(name, spec.default)
+        if name == "rotation" and isinstance(raw, str):
+            s = raw.strip()
+            if not s:
+                errs.append("transform.rotation 不能为空字符串")
+            elif "t" not in s:
+                try:
+                    float(s)
+                except ValueError:
+                    errs.append(
+                        f"transform.rotation 表达式必须含 t 或为数值：{raw!r}")
+            continue
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            errs.append(f"transform.{name} 必须是数字，收到 {raw!r}")
+            continue
+        if spec.min is not None and raw < spec.min:
+            errs.append(f"transform.{name}={raw} 小于下限 {spec.min}")
+        if spec.max is not None and raw > spec.max:
+            errs.append(f"transform.{name}={raw} 超过上限 {spec.max}")
+    return errs
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +219,7 @@ def capability_manifest() -> Dict[str, Any]:
         "schema_version": MANIFEST_VERSION,
         "operations": sorted(OPERATIONS),
         "transition_types": list(TRANSITION_TYPES),
+        "transform": {name: spec.to_dict() for name, spec in TRANSFORM_PARAMS.items()},
         "effects": {
             "video": {s.canonical: s.to_dict() for s in VIDEO_EFFECT_SPECS.values()},
             "audio": {s.canonical: s.to_dict() for s in AUDIO_EFFECT_SPECS.values()},

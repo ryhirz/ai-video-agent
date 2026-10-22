@@ -23,6 +23,7 @@ from .registry import (  # 单一真相：编译 / 校验 / 能力清单共用 r
     VIDEO_EFFECTS,
     PARAM_VIDEO_EFFECTS as _PARAM_VIDEO_EFFECTS,
     SIMPLE_VIDEO_EFFECTS as _SIMPLE_VIDEO_EFFECTS,
+    validate_transform,
 )
 
 POS_MAP = {
@@ -66,6 +67,59 @@ def _bgm_params(clip: Clip) -> Dict[str, Any]:
         if (e or {}).get("effectType") == BGM_MARKER:
             return e.get("params") or {}
     return {}
+
+
+# ---------------------------------------------------------------------------
+# transform -> 几何 / 透明度 filter（T4）
+# ---------------------------------------------------------------------------
+def _fmt_num(v: float) -> str:
+    """数字转 filtergraph 字面量：整数不带小数点，浮点去掉多余 0。"""
+    return f"{float(v):g}"
+
+
+def transform_geometry_filters(clip: Clip, out_w: int, out_h: int) -> List[str]:
+    """clip.transform 的几何部分 -> pad / rotate（+ 尺寸回调）。
+
+    顺序：pad -> rotate -> [scale 回 out_w x out_h]
+
+    - rotation 用 rotw/roth 扩画布后**必须**再 scale 回目标分辨率：否则该片段
+      尺寸与其他片段不同，下游 concat 会因尺寸不一致而失败。
+    - 含 t 的动态 rotation 表达式无法静态求 rotw/roth，保持原尺寸（ow=iw:oh=ih）。
+    - 参数非法时抛 ValueError（编译阶段报错，不交给 ffmpeg）。
+    """
+    tf = clip.transform
+    errs = validate_transform({
+        "x": tf.x, "y": tf.y, "scale": tf.scale,
+        "rotation": tf.rotation, "opacity": tf.opacity,
+    })
+    if errs:
+        raise ValueError("transform 非法：" + "；".join(errs))
+
+    filters: List[str] = []
+    x, y = float(tf.x), float(tf.y)
+    if x != 0 or y != 0:
+        if x < 0 or y < 0:
+            raise ValueError(
+                f"transform.x/y 不支持负值（ffmpeg pad 限制）：x={x:g}, y={y:g}")
+        filters.append(f"pad=iw:ih:{_fmt_num(x)}:{_fmt_num(y)}")
+
+    rot = tf.rotation
+    if rot != 0:
+        if isinstance(rot, str):
+            filters.append(f"rotate=a={rot.strip()}:ow=iw:oh=ih:c=black")
+        else:
+            a = _fmt_num(rot)
+            filters.append(f"rotate=a={a}:ow=rotw({a}):oh=roth({a}):c=black")
+            filters.append(f"scale={out_w}:{out_h}")
+    return filters
+
+
+def transform_opacity_filters(clip: Clip) -> List[str]:
+    """clip.transform.opacity -> format=rgba + colorchannelmixer（仅 <1 时）。"""
+    op = float(clip.transform.opacity)
+    if op >= 1.0:
+        return []
+    return ["format=rgba", f"colorchannelmixer=aa={_fmt_num(op)}"]
 
 
 def video_effect_filter(effect: Dict[str, Any],
@@ -198,6 +252,8 @@ def compile(tl: Timeline) -> Dict[str, Any]:
         dur = c.sourceOut - c.sourceIn
         chain = [f"trim=start={c.sourceIn}:end={c.sourceOut}",
                  "setpts=PTS-STARTPTS", f"scale={W}:{H}"]
+        # T4：几何变换（pad/rotate）在归一化之后、效果之前
+        chain.extend(transform_geometry_filters(c, W, H))
         for e in c.effects or []:
             if (e or {}).get("effectType") == BGM_MARKER:
                 continue
@@ -208,6 +264,8 @@ def compile(tl: Timeline) -> Dict[str, Any]:
                 unsupported.append(
                     f"画面效果 `{(e or {}).get('effectType')}` 不支持，已忽略"
                     f"（可用：{list(VIDEO_EFFECTS)}）")
+        # T4：透明度最后应用（先调色/效果，再设 alpha）
+        chain.extend(transform_opacity_filters(c))
         if c.id in trans_out:
             kind, td = trans_out[c.id]
             if td > 0 and dur > td + 1e-6:

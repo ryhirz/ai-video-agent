@@ -16,6 +16,35 @@
     "cross",
     "wipe"
   ],
+  "transform": {
+    "x": {
+      "default": 0,
+      "description": "水平偏移像素（pad 的 x；ffmpeg pad 不支持负值）",
+      "type": "number"
+    },
+    "y": {
+      "default": 0,
+      "description": "垂直偏移像素（pad 的 y；ffmpeg pad 不支持负值）",
+      "type": "number"
+    },
+    "scale": {
+      "default": 1.0,
+      "description": "缩放倍数（1.0 = 原始尺寸）",
+      "type": "number"
+    },
+    "rotation": {
+      "default": 0,
+      "description": "旋转弧度（rad）；可传数值，或含 t 的表达式",
+      "type": "number"
+    },
+    "opacity": {
+      "default": 1.0,
+      "min": 0.0,
+      "max": 1.0,
+      "description": "画面透明度",
+      "type": "number"
+    }
+  },
   "effects": {
     "video": {
       "grayscale": {
@@ -65,7 +94,8 @@
           "radius": {
             "default": 5,
             "min": 0,
-            "max": 50
+            "max": 50,
+            "type": "number"
           }
         }
       },
@@ -79,7 +109,8 @@
           "value": {
             "default": 0.1,
             "min": -1,
-            "max": 1
+            "max": 1,
+            "type": "number"
           }
         }
       },
@@ -93,7 +124,8 @@
           "value": {
             "default": 1.5,
             "min": 0,
-            "max": 2
+            "max": 2,
+            "type": "number"
           }
         }
       },
@@ -107,7 +139,8 @@
           "value": {
             "default": 1.5,
             "min": 0,
-            "max": 2
+            "max": 2,
+            "type": "number"
           }
         }
       },
@@ -119,7 +152,8 @@
         "params": {
           "duration": {
             "min": 0,
-            "max": 60
+            "max": 60,
+            "type": "number"
           }
         }
       },
@@ -131,7 +165,8 @@
         "params": {
           "duration": {
             "min": 0,
-            "max": 60
+            "max": 60,
+            "type": "number"
           }
         }
       }
@@ -147,7 +182,8 @@
           "value": {
             "default": 1.0,
             "min": 0,
-            "max": 2
+            "max": 2,
+            "type": "number"
           }
         }
       },
@@ -159,7 +195,8 @@
         "params": {
           "duration": {
             "min": 0,
-            "max": 60
+            "max": 60,
+            "type": "number"
           }
         }
       },
@@ -171,7 +208,8 @@
         "params": {
           "duration": {
             "min": 0,
-            "max": 60
+            "max": 60,
+            "type": "number"
           }
         }
       }
