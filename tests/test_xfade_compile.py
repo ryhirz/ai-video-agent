@@ -39,6 +39,15 @@ class TestOffset(unittest.TestCase):
         # A: sourceIn=10, sourceOut=18 -> 流时长 8；D=1 -> offset = 7
         self.assertAlmostEqual(compiler.xfade_offset(_v("a", 10, 18), 1.0), 7.0)
 
+    def test_rejected_when_second_clip_shorter(self) -> None:
+        """duration 必须小于两段流时长的较小值（不能只看第一段）。"""
+        tl = _tl([_v("a", 0, 4), _v("b", 4, 6)],
+                 [Transition("t1", "fade", 3.0, ["a", "b"])])
+        res = compiler.compile(tl)
+        self.assertNotIn("xfade=", res["video_filter"])
+        self.assertTrue(any("不合法" in u for u in res["unsupported"]),
+                        res["unsupported"])
+
     def test_zero_duration_clip_rejected(self) -> None:
         with self.assertRaises(ValueError):
             compiler.xfade_offset(_v("z", 5, 5), 1.0)

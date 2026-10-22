@@ -315,10 +315,12 @@ def _valid_transitions(tl: Timeline,
             _bad(f"转场 `{tr.id}` 引用的片段不存在或数量不为 2，已忽略")
             continue
         dur_a = _stream_dur(live[ids[0]])
+        dur_b = _stream_dur(live[ids[1]])
         d = float(tr.duration)
-        if dur_a <= 0 or d <= 0 or d >= dur_a:
+        shortest = min(dur_a, dur_b)
+        if dur_a <= 0 or dur_b <= 0 or d <= 0 or d >= shortest:
             _bad(f"转场 `{tr.id}` 时长 {d:g}s 不合法"
-                 f"（片段 `{ids[0]}` 流时长 {dur_a:g}s），已忽略并退化为硬切")
+                 f"（两段流时长 {dur_a:g}s / {dur_b:g}s），已忽略并退化为硬切")
             continue
         out.append(tr)
     return out
