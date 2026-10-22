@@ -124,6 +124,8 @@ bash _verify/_run_gates.sh
 | `transform.rotation` | 单位为**弧度**（`rotate` 滤镜原生单位）。契约 v1.0.0 文档写"度"，代码已按弧度实现，契约待升版同步。 |
 | `transform.scale` | **planned**：契约有该字段，但当前由输出归一化 `scale=W:H` 接管，尚未单独编译；`capability_manifest.json` 中该参数标 `supported: false`，显式设非默认值会被校验拒绝。 |
 | 旋转视觉 | `rotate` 默认黑底，旋转后四角进黑边；小角度可接受，大角度或非 90° 整数倍会明显露黑角。 |
+| 转场引用非法 | `transition` 引用的片段**不存在 / 时间轴不相邻 / duration ≥ 较短片段时长** → 在 `validate_ops` 阶段直接报错，不会进入编译（不再静默忽略）。 |
+| 音频缺失时的转场 | 视频片段数与音频片段数不一致时，**音频转场跳过并记 `unsupported`**（视频转场仍生效）。`anullsrc` 补静音留作后续；当前策略已写入 manifest 的 `transition_policy`。 |
 
 ## 环境要求
 

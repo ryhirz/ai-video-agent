@@ -19,6 +19,20 @@ def _tl() -> Timeline:
     )
 
 
+def _tl_multi() -> Timeline:
+    """三段相邻片段（各 4s），用于转场的相邻性/时长校验。"""
+    return Timeline(
+        metadata=Metadata(schemaVersion="1.0.0", fps=30,
+                          resolution={"w": 640, "h": 360}, duration=12.0),
+        tracks=[Track("v_main", "video")],
+        clips=[
+            Clip("c1", "v_main", "m1", 0.0, 4.0, 0.0, 4.0),
+            Clip("c2", "v_main", "m2", 4.0, 8.0, 0.0, 4.0),
+            Clip("c3", "v_main", "m3", 8.0, 12.0, 0.0, 4.0),
+        ],
+    )
+
+
 class TestEffectParamRange(unittest.TestCase):
     def test_out_of_range_saturation_rejected_and_timeline_untouched(self) -> None:
         tl = _tl()
@@ -142,3 +156,48 @@ class TestApplyOperationsStopsInvalid(unittest.TestCase):
                 "payload": {"targetClipId": "c1", "effectType": "saturation",
                             "params": {"value": 5}},
             }], strict=True)
+
+
+class TestTransitionValidation(unittest.TestCase):
+    """T5.1：transition 的引用 / 相邻 / 时长上限，在校验期就拦下。"""
+
+    def test_missing_clip_rejected(self) -> None:
+        errs = operations.validate_ops(_tl_multi(), [{
+            "type": "transition",
+            "payload": {"transitionType": "fade", "duration": 1.0,
+                        "clips": ["c1", "nope"]},
+        }])
+        self.assertTrue(any("引用的片段不存在" in e["reason"] for e in errs), errs)
+
+    def test_non_adjacent_clips_rejected(self) -> None:
+        errs = operations.validate_ops(_tl_multi(), [{
+            "type": "transition",
+            "payload": {"transitionType": "fade", "duration": 1.0,
+                        "clips": ["c1", "c3"]},
+        }])
+        self.assertTrue(any("不相邻" in e["reason"] for e in errs), errs)
+
+    def test_duration_not_shorter_than_clip_rejected(self) -> None:
+        errs = operations.validate_ops(_tl_multi(), [{
+            "type": "transition",
+            "payload": {"transitionType": "fade", "duration": 4.0,
+                        "clips": ["c1", "c2"]},
+        }])
+        self.assertTrue(any(e["field"] == "payload.duration" for e in errs), errs)
+
+    def test_adjacent_valid_transition_passes(self) -> None:
+        errs = operations.validate_ops(_tl_multi(), [{
+            "type": "transition",
+            "payload": {"transitionType": "fade", "duration": 1.0,
+                        "clips": ["c1", "c2"]},
+        }])
+        self.assertEqual(errs, [])
+
+    def test_single_clip_timeline_rejects_transition(self) -> None:
+        """单片段时间轴上定义转场 → 第二个 id 不存在，必须报错。"""
+        errs = operations.validate_ops(_tl(), [{
+            "type": "transition",
+            "payload": {"transitionType": "fade", "duration": 1.0,
+                        "clips": ["c1", "c2"]},
+        }])
+        self.assertTrue(any("引用的片段不存在" in e["reason"] for e in errs), errs)

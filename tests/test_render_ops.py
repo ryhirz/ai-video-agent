@@ -190,6 +190,15 @@ class TestRenderedEffectIsReal(unittest.TestCase):
         self.assertGreater(mid[2], 20, f"交叉溶解中点应含蓝分量：{mid}")
         self.assertGreater(sum(mid), 60, f"转场中点不应是黑场：{mid}")
 
+    def test_transition_filters_accepted_by_real_ffmpeg(self) -> None:
+        """T5.1 冒烟哨兵：xfade / acrossfade 的参数名必须被真实 ffmpeg 接受。
+
+        stub/mock 抓不到 `acrossfade=c1=fade` 这类枚举错误（c1 是曲线名，
+        合法值是 tri/qsin/...），只有真跑一遍 ffmpeg 才会暴露。
+        """
+        p = self._render(OP_CASES["transition"], "trans_smoke")
+        self.assertGreater(Path(p).stat().st_size, 0)
+
     def test_bgm_is_really_mixed_into_the_audio(self) -> None:
         p = self._render(OP_CASES["add_bgm"], "bgm")
         d = _pcm_diff(_pcm(p), _pcm(str(self.base)))

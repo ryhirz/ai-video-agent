@@ -277,6 +277,13 @@ def capability_manifest() -> Dict[str, Any]:
         "operations": sorted(OPERATIONS),
         "transition_types": list(TRANSITION_TYPES),
         "transition": {name: spec.to_dict() for name, spec in TRANSITION_SPECS.items()},
+        # T5.1：把降级/拒绝策略显式写进清单，别让 planner 依赖不确定的行为
+        "transition_policy": {
+            "invalid_reference": "reject_at_validate",
+            "non_adjacent_clips": "reject_at_validate",
+            "duration_too_long": "reject_at_validate",
+            "audio_track_missing": "skip_audio_transition_with_warning",
+        },
         "transform": {name: spec.to_dict() for name, spec in TRANSFORM_PARAMS.items()},
         "effects": {
             "video": {s.canonical: s.to_dict() for s in VIDEO_EFFECT_SPECS.values()},

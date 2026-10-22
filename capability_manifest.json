@@ -33,6 +33,12 @@
       "supported": true
     }
   },
+  "transition_policy": {
+    "invalid_reference": "reject_at_validate",
+    "non_adjacent_clips": "reject_at_validate",
+    "duration_too_long": "reject_at_validate",
+    "audio_track_missing": "skip_audio_transition_with_warning"
+  },
   "transform": {
     "x": {
       "default": 0,

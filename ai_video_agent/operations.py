@@ -82,6 +82,11 @@ def _is_num(v: Any) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
+def _stream_dur(c: Clip) -> float:
+    """片段在流上的实际时长（与 compiler 同口径：sourceOut - sourceIn）。"""
+    return float(c.sourceOut - c.sourceIn)
+
+
 def _check_effect(tl: Optional[Timeline], op: Dict[str, Any],
                   idx: int) -> List[Dict[str, Any]]:
     """效果名校验 + 参数域校验（参数域来自 registry，单一真相）。"""
@@ -179,6 +184,35 @@ def validate_ops(tl: Optional[Timeline],
                 errors.append(_err(op, i, "payload.duration", f"必须 > 0，收到 {d!r}"))
             if not isinstance(clips, (list, tuple)) or len(clips) != 2:
                 errors.append(_err(op, i, "payload.clips", "必须是长度为 2 的数组"))
+            elif tl is not None:
+                # T5.1：引用必须存在 + 时间轴相邻 + duration 小于两段流时长。
+                # 提前在校验期失败，而不是拖到编译期静默忽略。
+                by_id = {c.id: c for c in tl.clips}
+                missing = [cid for cid in clips if cid not in by_id]
+                if missing:
+                    errors.append(_err(op, i, "payload.clips",
+                                       f"引用的片段不存在：{missing}"))
+                else:
+                    ca, cb = by_id[clips[0]], by_id[clips[1]]
+                    if ca.track != cb.track:
+                        errors.append(_err(
+                            op, i, "payload.clips",
+                            f"片段必须位于同一轨道：`{ca.track}` vs `{cb.track}`"))
+                    else:
+                        # 只在同一轨道内比相邻 —— tl.clips 混有音频轨，全局排序会把
+                        # 视频 a/b 隔开（实测踩到），所以必须先按 track 过滤。
+                        same = sorted((c for c in tl.clips if c.track == ca.track),
+                                      key=lambda c: c.in_)
+                        ids = [c.id for c in same]
+                        if abs(ids.index(ca.id) - ids.index(cb.id)) != 1:
+                            errors.append(_err(
+                                op, i, "payload.clips",
+                                f"片段 `{ca.id}` 与 `{cb.id}` 在时间轴上不相邻"))
+                    da, db = _stream_dur(ca), _stream_dur(cb)
+                    if _is_num(d) and d > 0 and (d >= da or d >= db):
+                        errors.append(_err(
+                            op, i, "payload.duration",
+                            f"{d:g}s 必须小于两段流时长（{da:g}s / {db:g}s）"))
         elif typ == "add_bgm":
             lo, hi = p.get("in"), p.get("out")
             vol = p.get("volume", 1.0)
