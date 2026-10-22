@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from .timeline import Timeline, Clip
+from .timeline import Timeline, Clip, Transition
 from .registry import (  # 单一真相：编译 / 校验 / 能力清单共用 registry 的表
     AUDIO_EFFECTS,
     BGM_MARKER,
@@ -211,6 +211,123 @@ def build_ass_content(tl: Timeline) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# T5 真转场：xfade / acrossfade + 纯函数分组
+# ---------------------------------------------------------------------------
+def _stream_dur(clip: Clip) -> float:
+    """片段在流上的实际时长（trim + setpts 之后）。"""
+    return float(clip.sourceOut - clip.sourceIn)
+
+
+def _transition_between(transitions: List[Transition], id_a: str,
+                        id_b: str) -> Optional[Transition]:
+    """取连接 id_a 与 id_b 的转场（不区分 attachedClips 顺序）。"""
+    for tr in transitions:
+        ids = list(tr.attachedClips or [])
+        if len(ids) == 2 and {ids[0], ids[1]} == {id_a, id_b}:
+            return tr
+    return None
+
+
+def _xfade_kind(transition_type: str) -> str:
+    """契约 transitionType -> ffmpeg xfade.transition。"""
+    t = (transition_type or "").lower()
+    if "white" in t:
+        return "fadewhite"
+    if t.startswith("wipe"):
+        return "wiperight"
+    return "fade"          # fade / cross 均归一为交叉淡化
+
+
+def xfade_offset(clip_a: Clip, duration: float) -> float:
+    """第一对转场的 offset：clipA 流时长 − 转场时长。
+
+    零时长素材、或转场时长不落在 (0, dur) 内时抛 ValueError（契约级约束）。
+    """
+    dur = _stream_dur(clip_a)
+    if dur <= 0:
+        raise ValueError(
+            f"片段 `{clip_a.id}` 流时长为 0（sourceIn == sourceOut），无法做转场")
+    d = float(duration)
+    if d <= 0 or d >= dur:
+        raise ValueError(
+            f"转场时长 {d:g}s 必须落在 (0, {dur:g}s) 内（片段 `{clip_a.id}` 的流时长）")
+    return dur - d
+
+
+def xfade_total_duration(clips: List[Clip],
+                         transitions: List[Transition]) -> float:
+    """转场后的成片总时长 = Σ片段流时长 − Σ有效转场时长。"""
+    total = sum(_stream_dur(c) for c in clips)
+    ids = {c.id for c in clips}
+    for tr in transitions:
+        pair = list(tr.attachedClips or [])
+        if len(pair) == 2 and all(i in ids for i in pair):
+            total -= float(tr.duration)
+    return total
+
+
+def group_clips_by_transition(clips: List[Clip],
+                              transitions: List[Transition]) -> List[List[Clip]]:
+    """按「相邻对是否有转场」把片段分组（纯函数）。
+
+    不变量（破坏即抛，属内部错误）：
+    - 组内相邻对必须有 transition；
+    - 组间相邻对必须没有 transition。
+    """
+    if not clips:
+        return []
+    ordered = sorted(clips, key=lambda c: c.in_)
+    groups: List[List[Clip]] = [[ordered[0]]]
+    for prev, nxt in zip(ordered, ordered[1:]):
+        if _transition_between(transitions, prev.id, nxt.id):
+            groups[-1].append(nxt)
+        else:
+            groups.append([nxt])
+    for g in groups:
+        for x, y in zip(g, g[1:]):
+            assert _transition_between(transitions, x.id, y.id), \
+                f"分组不变量破坏：组内 {x.id}->{y.id} 缺少 transition"
+    for g1, g2 in zip(groups, groups[1:]):
+        assert not _transition_between(transitions, g1[-1].id, g2[0].id), \
+            f"分组不变量破坏：组间 {g1[-1].id}->{g2[0].id} 不应有 transition"
+    return groups
+
+
+def build_xfade_filter(label_a: str, label_b: str, out_label: str,
+                       duration: float, offset: float,
+                       transition_type: str = "fade") -> str:
+    return (f"[{label_a}][{label_b}]xfade=transition={_xfade_kind(transition_type)}"
+            f":duration={_fmt_num(duration)}:offset={_fmt_num(offset)}[{out_label}]")
+
+
+def build_acrossfade_filter(label_a: str, label_b: str, out_label: str,
+                            duration: float) -> str:
+    """音频交叉淡化：曲线固定 tri（线性）。
+
+    注意：acrossfade 的 c1/c2 是**曲线类型**（nofade/tri/qsin/...），不接受
+    "fade"（那是 xfade 的 transition 名）。tri = 线性斜率，与 xfade 的 fade
+    语义一致，且不向 planner 暴露曲线选择。
+    """
+    return (f"[{label_a}][{label_b}]acrossfade=d={_fmt_num(duration)}"
+            f":c1=tri:c2=tri[{out_label}]")
+
+
+def _audio_groups_for(v_groups: List[List[Clip]], vclips: List[Clip],
+                      aclips: List[Clip]) -> Optional[List[List[Clip]]]:
+    """把视频分组映射为音频分组；视频/音频数量不一致时返回 None（调用方降级）。"""
+    if len(vclips) != len(aclips):
+        return None
+    v_idx = {c.id: i for i, c in enumerate(vclips)}
+    out: List[List[Clip]] = []
+    for g in v_groups:
+        try:
+            out.append([aclips[v_idx[c.id]] for c in g])
+        except (KeyError, IndexError):
+            return None
+    return out
+
+
 def compile(tl: Timeline) -> Dict[str, Any]:
     """纯函数：只读 tl -> FFmpeg 描述。同输入同输出。"""
     W = tl.metadata.resolution.get("w", 1920)
@@ -223,19 +340,24 @@ def compile(tl: Timeline) -> Dict[str, Any]:
     main_aclips = [c for c in aclips if id(c) not in bgm_ids]
     bgm_clips = [c for c in aclips if id(c) in bgm_ids]
 
-    # 转场：把 attachedClips 前一个当「淡出」、后一个当「淡入」
+    # 转场（T5）：只保留「引用完整 + 时长合法」的；其余显式记 unsupported（不静默）
     live_ids = {c.id for c in tl.clips}
-    trans_out: Dict[str, Tuple[str, float]] = {}
-    trans_in: Dict[str, Tuple[str, float]] = {}
+    clip_by_id = {c.id: c for c in tl.clips}
+    valid_transitions: List[Transition] = []
     for tr in tl.transitions:
-        ids = [i for i in (tr.attachedClips or []) if i in live_ids]
-        if len(ids) < 2:
-            if tr.attachedClips:
-                unsupported.append(
-                    f"转场 `{tr.id}` 引用的片段已不存在，已忽略")
+        ids = list(tr.attachedClips or [])
+        if len(ids) != 2 or any(i not in live_ids for i in ids):
+            unsupported.append(
+                f"转场 `{tr.id}` 引用的片段不存在或数量不为 2，已忽略")
             continue
-        trans_out[ids[0]] = (tr.type, float(tr.duration))
-        trans_in[ids[1]] = (tr.type, float(tr.duration))
+        dur_a = _stream_dur(clip_by_id[ids[0]])
+        d = float(tr.duration)
+        if dur_a <= 0 or d <= 0 or d >= dur_a:
+            unsupported.append(
+                f"转场 `{tr.id}` 时长 {d:g}s 不合法"
+                f"（片段 `{ids[0]}` 流时长 {dur_a:g}s），已忽略并退化为硬切")
+            continue
+        valid_transitions.append(tr)
 
     inputs: List[str] = []
     vid_parts: List[str] = []       # 视频逐片段链
@@ -268,19 +390,7 @@ def compile(tl: Timeline) -> Dict[str, Any]:
                     f"（可用：{list(VIDEO_EFFECTS)}）")
         # T4：透明度最后应用（先调色/效果，再设 alpha）
         chain.extend(transform_opacity_filters(c))
-        if c.id in trans_out:
-            kind, td = trans_out[c.id]
-            if td > 0 and dur > td + 1e-6:
-                chain.append(f"fade=t=out:st={dur - td:.3f}:d={td:.3f}"
-                             + (":color=white" if "white" in kind.lower() else ""))
-            else:
-                unsupported.append(
-                    f"转场时长 {td}s 相对片段 `{c.id}`（{dur:.2f}s）过大，已忽略")
-        if c.id in trans_in:
-            kind, td = trans_in[c.id]
-            if td > 0 and dur > td + 1e-6:
-                chain.append(f"fade=t=in:st=0:d={td:.3f}"
-                             + (":color=white" if "white" in kind.lower() else ""))
+        # T5：转场不再用片段级 fade 近似，改由汇总阶段的 xfade 完成
         vid_parts.append(f"[{i}:v]" + ",".join(chain) + f"[{lbl}]")
         vlabels.append(f"[{lbl}]")
 
@@ -324,13 +434,38 @@ def compile(tl: Timeline) -> Dict[str, Any]:
         bgm_parts.append(f"[{idx}:a]" + ",".join(chain) + f"[{lbl}]")
         bgm_labels.append(f"[{lbl}]")
 
-    # ---- 视频拼接 ----
+    # ---- 视频拼接（T5）：按转场分组；组内链式 xfade，组间 concat ----
     vmap = ""
+    video_groups = group_clips_by_transition(vclips, valid_transitions)
+    label_of = {c.id: f"cv{i}" for i, c in enumerate(vclips)}
     if len(vclips) == 1:
         vf_tail.append(f"{vlabels[0]}null[vout]")
         vmap = "[vout]"
     elif len(vclips) > 1:
-        vf_tail.append("".join(vlabels) + f"concat=n={len(vclips)}:v=1:a=0[vout]")
+        group_labels: List[str] = []
+        for gi, g in enumerate(video_groups):
+            if len(g) == 1:
+                group_labels.append(f"[{label_of[g[0].id]}]")
+                continue
+            cur = label_of[g[0].id]
+            acc = _stream_dur(g[0])
+            for step, nxt in enumerate(g[1:], 1):
+                prev = g[step - 1]
+                tr = _transition_between(valid_transitions, prev.id, nxt.id)
+                d = float(tr.duration)
+                # 链式 xfade 的 offset 基准是「累积流时长」，不是单段时长
+                offset = acc - d
+                out = f"xg{gi}_{step}"
+                vf_tail.append(build_xfade_filter(
+                    cur, label_of[nxt.id], out, d, offset, tr.type))
+                cur = out
+                acc = acc + _stream_dur(nxt) - d
+            group_labels.append(f"[{cur}]")
+        if len(group_labels) == 1:
+            vf_tail.append(f"{group_labels[0]}null[vout]")
+        else:
+            vf_tail.append("".join(group_labels)
+                           + f"concat=n={len(group_labels)}:v=1:a=0[vout]")
         vmap = "[vout]"
 
     # ---- 字幕叠加 ----
@@ -348,17 +483,51 @@ def compile(tl: Timeline) -> Dict[str, Any]:
                        + f"amix=inputs={len(bgm_clips)}:duration=longest:normalize=0[abgm]")
         bgm = "[abgm]"
 
-    # ---- 主音频拼接 + 与 BGM 混音 ----
-    # 无 BGM 时保持历史行为：主音频 concat 直接落 [aout]（对外契约不变）。
+    # ---- 主音频拼接（T5）：与视频同构分组时用 acrossfade，否则显式降级 ----
+    # 无 BGM 时保持历史行为：主音频直接落 [aout]（对外契约不变）。
     final_label = "[amain]" if bgm else "[aout]"
     amain = ""
     if len(main_aclips) == 1:
         amain = alabels[0]
     elif len(main_aclips) > 1:
-        # 顺序拼接必须用 concat；amix 是并行混音（总长只取最长段），与顺次拼接不符。
-        af_tail.append("".join(alabels)
-                       + f"concat=n={len(main_aclips)}:v=0:a=1{final_label}")
-        amain = final_label
+        audio_groups = _audio_groups_for(video_groups, vclips, main_aclips)
+        if audio_groups is None:
+            unsupported.append(
+                f"音频片段数({len(main_aclips)})与视频({len(vclips)})不一致，"
+                f"音频转场已跳过（成片可能音画不同步）")
+            af_tail.append("".join(alabels)
+                           + f"concat=n={len(main_aclips)}:v=0:a=1{final_label}")
+            amain = final_label
+        elif all(len(g) == 1 for g in audio_groups):
+            # 无有效转场：保持历史行为（concatenate，逐字节不变）
+            af_tail.append("".join(alabels)
+                           + f"concat=n={len(main_aclips)}:v=0:a=1{final_label}")
+            amain = final_label
+        else:
+            a_index = {c.id: f"ca{j}" for j, c in enumerate(main_aclips)}
+            a_group_labels: List[str] = []
+            for gi, g in enumerate(audio_groups):
+                vg = video_groups[gi]      # 同构视频组：transition 记的是视频 clip id
+                if len(g) == 1:
+                    a_group_labels.append(f"[{a_index[g[0].id]}]")
+                    continue
+                cur = a_index[g[0].id]
+                for step, nxt in enumerate(g[1:], 1):
+                    # 与视频取同一个 transition.duration —— 音画转场强制同步
+                    tr = _transition_between(valid_transitions,
+                                             vg[step - 1].id, vg[step].id)
+                    assert tr is not None, "音频分组与视频分组不同构"
+                    d = float(tr.duration)
+                    out = f"ag{gi}_{step}"
+                    af_tail.append(build_acrossfade_filter(cur, a_index[nxt.id], out, d))
+                    cur = out
+                a_group_labels.append(f"[{cur}]")
+            if len(a_group_labels) == 1:
+                af_tail.append(f"{a_group_labels[0]}anull{final_label}")
+            else:
+                af_tail.append("".join(a_group_labels)
+                               + f"concat=n={len(a_group_labels)}:v=0:a=1{final_label}")
+            amain = final_label
 
     amap = ""
     if amain and bgm:

@@ -177,14 +177,18 @@ class TestRenderedEffectIsReal(unittest.TestCase):
         self.assertLessEqual(abs(px[1] - px[2]), 12, f"应无彩色分量：{px}")
         self.assertNotEqual(px, _pixel(str(self.base), 0.5), "像素应与原片不同")
 
-    def test_transition_darkens_the_boundary(self) -> None:
+    def test_transition_crossfades_instead_of_black(self) -> None:
+        """T5：真 xfade —— 转场区是蓝/红交叉溶解，不再有黑场跳变。
+
+        素材 0–1s 蓝、1–2s 红，转场 0.4s 落在 0.6–1.0s；中点 0.8s 应同时
+        含红、蓝分量（旧实现是各自 fade，中点接近黑）。
+        """
         p = self._render(OP_CASES["transition"], "trans")
-        at_cut = _pixel(p, 1.0)
-        base_cut = _pixel(str(self.base), 1.0)
-        self.assertIsNotNone(at_cut)
-        # 淡入起点应接近黑（fade from black），原片该点是纯红
-        self.assertLess(sum(at_cut), sum(base_cut),
-                        f"转场后边界应更暗：{at_cut} vs 原片 {base_cut}")
+        mid = _pixel(p, 0.8)
+        self.assertIsNotNone(mid)
+        self.assertGreater(mid[0], 20, f"交叉溶解中点应含红分量：{mid}")
+        self.assertGreater(mid[2], 20, f"交叉溶解中点应含蓝分量：{mid}")
+        self.assertGreater(sum(mid), 60, f"转场中点不应是黑场：{mid}")
 
     def test_bgm_is_really_mixed_into_the_audio(self) -> None:
         p = self._render(OP_CASES["add_bgm"], "bgm")

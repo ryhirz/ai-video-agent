@@ -154,13 +154,22 @@ class TestManifestHonesty(unittest.TestCase):
         self.assertNotIn("pad=", _vf(scale=1.0))
 
     def test_every_supported_param_compiles(self) -> None:
-        """supported=true 的参数必须真的进 filtergraph（清单承诺 = 实现）。"""
-        probes = {"x": {"x": 5}, "y": {"y": 5},
-                  "rotation": {"rotation": 0.5}, "opacity": {"opacity": 0.5}}
+        """supported=true 的参数必须真的进 filtergraph（清单承诺 = 实现）。
+
+        注意：opacity 落到 colorchannelmixer 的 aa 选项，并没有同名滤镜，
+        所以断言必须匹配实际 filter 名，否则会误判。
+        """
+        probes = {
+            "x": ({"x": 5}, "pad=iw:ih:5:0"),
+            "y": ({"y": 5}, "pad=iw:ih:0:5"),
+            "rotation": ({"rotation": 0.5}, "rotate=a=0.5"),
+            "opacity": ({"opacity": 0.5}, "colorchannelmixer=aa=0.5"),
+        }
         m = registry.capability_manifest()["transform"]
-        for name, kw in probes.items():
+        for name, (kw, needle) in probes.items():
             if m[name]["supported"]:
-                self.assertTrue(_vf(**kw), f"supported 参数 {name} 未落入 filtergraph")
+                self.assertIn(needle, _vf(**kw),
+                              f"supported 参数 {name} 未按预期落入 filtergraph")
 
     def test_xy_description_states_crop_semantics(self) -> None:
         """隐患 B：清单必须写明 x/y 是"画布内偏移 + 裁边"，不是无损平移。"""
