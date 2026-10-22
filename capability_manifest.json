@@ -8,6 +8,7 @@
     "delete_range",
     "effect",
     "move_clip",
+    "speed",
     "transition",
     "trim"
   ],
@@ -53,6 +54,23 @@
       "bg",
       "position"
     ]
+  },
+  "speed": {
+    "rate": {
+      "default": 1.0,
+      "min": 0.01,
+      "max": 1000,
+      "description": "变速倍率；1.0 = 原速",
+      "supported": true
+    },
+    "audio_backend": {
+      "default": "atempo",
+      "choices": [
+        "atempo"
+      ],
+      "description": "音频变速后端；rubberband 本机构建可用但未启用",
+      "supported": true
+    }
   },
   "transform": {
     "x": {

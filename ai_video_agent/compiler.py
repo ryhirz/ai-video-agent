@@ -24,6 +24,7 @@ from .registry import (  # 单一真相：编译 / 校验 / 能力清单共用 r
     VIDEO_EFFECTS,
     PARAM_VIDEO_EFFECTS as _PARAM_VIDEO_EFFECTS,
     SIMPLE_VIDEO_EFFECTS as _SIMPLE_VIDEO_EFFECTS,
+    SPEED_MARKER,
     resolve_transition,
     validate_transform,
 )
@@ -184,6 +185,37 @@ def audio_effect_filter(effect: Dict[str, Any], clip_dur: float) -> Optional[str
         return (f"afade=t=out:st={clip_dur - d:.3f}:d={d:.3f}"
                 if 0 < d < clip_dur else None)
     return None
+
+
+def _speed_rate(clip: Clip) -> Optional[float]:
+    """读取片段上的变速倍率（存在 effects 里的 speed 标记）；未设置返回 None。"""
+    for e in clip.effects or []:
+        if (e or {}).get("effectType") == SPEED_MARKER:
+            try:
+                return float((e.get("params") or {}).get("rate", 1.0))
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _atempo_filters(rate: float) -> List[str]:
+    """把倍率拆成 atempo 链（单次支持 0.5~100）。rate == 1 返回空列表。
+
+    极端倍率串联：200x -> atempo=100,atempo=2；0.25x -> atempo=0.5,atempo=0.5。
+    """
+    if abs(float(rate) - 1.0) < 1e-9:
+        return []
+    filters: List[str] = []
+    r = float(rate)
+    while r > 100.0:
+        filters.append("atempo=100")
+        r /= 100.0
+    while r < 0.5:
+        filters.append("atempo=0.5")
+        r /= 0.5
+    if abs(r - 1.0) > 1e-9:
+        filters.append(f"atempo={_fmt_num(r)}")
+    return filters
 
 
 def build_ass_content(tl: Timeline) -> str:
@@ -477,10 +509,15 @@ def compile(tl: Timeline) -> Dict[str, Any]:
         dur = c.sourceOut - c.sourceIn
         chain = [f"trim=start={c.sourceIn}:end={c.sourceOut}",
                  "setpts=PTS-STARTPTS", f"scale={W}:{H}"]
+        # T7：变速必须在 trim/setpts 之后 —— 否则 trim 的 start/end 会按变速后的
+        # PTS 解释，切点全错（把 setpts 插到链首会切空）。
+        sr = _speed_rate(c)
+        if sr is not None and abs(sr - 1.0) > 1e-9:
+            chain.append(f"setpts=PTS/{_fmt_num(sr)}")
         # T4：几何变换（pad/rotate）在归一化之后、效果之前
         chain.extend(transform_geometry_filters(c, W, H))
         for e in c.effects or []:
-            if (e or {}).get("effectType") == BGM_MARKER:
+            if (e or {}).get("effectType") in (BGM_MARKER, SPEED_MARKER):
                 continue
             f = video_effect_filter(e, dur)
             if f:
@@ -514,6 +551,8 @@ def compile(tl: Timeline) -> Dict[str, Any]:
             # 但会**静默下混成 mono**（输出 channels=1），属于隐性音质损失。
             chain.append("aformat=sample_rates=48000:channel_layouts=stereo")
         for e in c.effects or []:
+            if (e or {}).get("effectType") == SPEED_MARKER:
+                continue                       # speed 不是音频效果，单独处理
             f = audio_effect_filter(e, dur)
             if f:
                 chain.append(f)
@@ -521,6 +560,10 @@ def compile(tl: Timeline) -> Dict[str, Any]:
                 unsupported.append(
                     f"音频效果 `{(e or {}).get('effectType')}` 不支持，已忽略"
                     f"（可用：{list(AUDIO_EFFECTS)}）")
+        # T7：音频变速（effects 之后）
+        sr_a = _speed_rate(c)
+        if sr_a is not None:
+            chain.extend(_atempo_filters(sr_a))
         a_parts.append(f"[{idx}:a]" + ",".join(chain) + f"[{lbl}]")
         alabels.append(f"[{lbl}]")
 

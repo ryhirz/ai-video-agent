@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .timeline import Timeline, Clip, Subtitle, Track, Transition
 from .compiler import AUDIO_EFFECTS, BGM_MARKER, VIDEO_EFFECTS
-from .registry import TRANSITION_TYPES, resolve_effect
+from .registry import SPEED_MARKER, TRANSITION_TYPES, resolve_effect
 
 
 class OperationError(RuntimeError):
@@ -234,6 +234,12 @@ def validate_ops(tl: Optional[Timeline],
             elif s < 0 or s >= e:
                 errors.append(_err(op, i, "payload.start",
                                    f"需满足 0 <= start < end，收到 {s} / {e}"))
+        elif typ == "speed":
+            r = p.get("rate")
+            if not _is_num(r) or r <= 0:
+                errors.append(_err(op, i, "payload.rate", f"必须 > 0，收到 {r!r}"))
+            elif r > 1000:
+                errors.append(_err(op, i, "payload.rate", f"不能超过 1000，收到 {r}"))
     return errors
 
 
@@ -740,6 +746,38 @@ def _apply_effect(t: Timeline, p: Dict[str, Any]) -> None:
     c.effects.append({"effectType": et, "params": p.get("params", {})})
 
 
+def _set_speed(c: Clip, rate: float) -> None:
+    """把变速标记写进 clip.effects（覆盖旧值）。"""
+    c.effects = [e for e in (c.effects or [])
+                 if (e or {}).get("effectType") != SPEED_MARKER]
+    c.effects.append({"effectType": SPEED_MARKER, "params": {"rate": rate}})
+
+
+def _apply_speed(t: Timeline, p: Dict[str, Any]) -> None:
+    """变速：写进 `clip.effects`（可序列化），并对配对音频做 A/V 同步。
+
+    - 不用 `clip.speed = rate` 动态属性：Clip 是 dataclass，`asdict()` 只序列化声明
+      字段，而 `Timeline.copy()` 走 `loads(dumps())` —— 动态属性会被直接抹掉，
+      表现为「多条操作时 speed 静默失效」。
+    - A/V 同步：视频变速而音频不变时，`-shortest` 会把音频截断到视频长度，音画错位；
+      因此同 sourceRef + 同源区间的音频 clip 必须一起变速。
+    """
+    c = _find_clip(t, p["targetClipId"])
+    rate = float(p["rate"])
+    if rate <= 0 or rate > 1000:
+        raise ValueError(f"speed rate 必须在 (0, 1000] 内，收到 {rate}")
+
+    _set_speed(c, rate)
+    if _track_type(t, c) == "video":
+        for other in t.clips:
+            if (other.id != c.id
+                    and _track_type(t, other) == "audio"
+                    and other.sourceRef == c.sourceRef
+                    and abs(other.sourceIn - c.sourceIn) < 1e-6
+                    and abs(other.sourceOut - c.sourceOut) < 1e-6):
+                _set_speed(other, rate)
+
+
 # ---------------------------------------------------------------------------
 # 操作类型 -> 处理函数
 # ---------------------------------------------------------------------------
@@ -755,4 +793,5 @@ OPERATION_HANDLERS = {
     "move_clip": _apply_move,
     "transition": _apply_transition,
     "effect": _apply_effect,
+    "speed": _apply_speed,
 }

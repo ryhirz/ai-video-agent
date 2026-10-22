@@ -48,7 +48,8 @@ _ZH2EN = {
 
 # 契约 v1.0.0 允许的操作类型（超出即视为模型幻觉，直接报错而不是让它继续污染操作链）
 OPS_V1 = ("cut", "trim", "add_subtitle", "add_bgm",
-          "delete_clip", "delete_range", "move_clip", "transition", "effect")
+          "delete_clip", "delete_range", "move_clip", "transition", "effect",
+          "speed")
 
 
 def _speech_by_shot(index: FootageIndex) -> List[Tuple[float, float, List[str]]]:

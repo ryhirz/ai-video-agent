@@ -69,6 +69,8 @@ OPERATIONS: Dict[str, Dict[str, Any]] = {
                                                                "clips"]},
     "effect":       {"summary": "给片段挂效果", "payload": ["targetClipId", "effectType",
                                                            "params"]},
+    "speed":        {"summary": "变速（视频 setpts + 音频 atempo）",
+                     "payload": ["targetClipId", "rate"]},
 }
 
 @dataclass(frozen=True)
@@ -235,6 +237,11 @@ AUDIO_EFFECT_SPECS: Dict[str, EffectSpec] = {
 # add_bgm 在 clip 上打的内部标记（不是用户可见效果）
 BGM_MARKER = "bgm_mix"
 
+# speed 操作的内部标记：必须存进 clip.effects（可序列化），
+# 不能用 `clip.speed = x` 动态属性 —— dataclass 的 asdict() 不收它，
+# Timeline.copy()（loads(dumps())）会把它抹掉。
+SPEED_MARKER = "speed"
+
 
 # ---------------------------------------------------------------------------
 # 向后兼容的派生表（compiler 旧接口）
@@ -293,6 +300,13 @@ def capability_manifest() -> Dict[str, Any]:
         },
         "subtitle_style": {
             "keys": ["font", "size", "color", "bg", "position"],
+        },
+        "speed": {
+            "rate": {"default": 1.0, "min": 0.01, "max": 1000,
+                     "description": "变速倍率；1.0 = 原速", "supported": True},
+            "audio_backend": {"default": "atempo", "choices": ["atempo"],
+                              "description": "音频变速后端；rubberband 本机构建可用但未启用",
+                              "supported": True},
         },
         "transform": {name: spec.to_dict() for name, spec in TRANSFORM_PARAMS.items()},
         "effects": {

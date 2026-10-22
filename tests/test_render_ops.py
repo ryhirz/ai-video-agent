@@ -110,6 +110,9 @@ OP_CASES = {
     "effect": [{"type": "effect", "payload": {"targetClipId": "src_video",
                                               "effectType": "grayscale",
                                               "params": {}}}],
+    "speed": [{"type": "cut", "payload": {"targetClipId": "src_video", "at": 1.0}},
+              {"type": "speed", "payload": {"targetClipId": "src_video__a",
+                                            "rate": 2.0}}],
 }
 
 
