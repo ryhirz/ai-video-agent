@@ -69,10 +69,15 @@ services:
       # 容器默认 JSON 日志（本地开发不设即走 dev 彩色）
       LOG_ENV: ${LOG_ENV:-prod}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Prometheus multiprocess 聚合目录（app+worker 共享卷）：
+      # 设定后 worker 指标落共享 mmap 文件、/metrics 聚合全部进程，
+      # worker:9101 自有端点自动停用（concurrency>1 也正确）
+      PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus
     volumes:
       - app_data:/app/server_data
       - app_outputs:/app/server_data/renders
       - app_tmp:/app/server_data/tmp
+      - prometheus_data:/tmp/prometheus
     depends_on:
       redis:
         condition: service_healthy
@@ -84,11 +89,12 @@ services:
     command: ["celery", "-A", "server.tasks", "worker", "--loglevel=info", "--concurrency=1"]
     environment: *app_env          # 与 app 完全同环境：同 DB/同存储/同 broker
     ports:
-      - "${WORKER_METRICS_PORT:-9101}:9101"   # worker 自有 /metrics（Prometheus 拉取是进程内的）
+      - "${WORKER_METRICS_PORT:-9101}:9101"   # 仅单进程模式生效（multiprocess 下自动停用）
     volumes:
       - app_data:/app/server_data
       - app_outputs:/app/server_data/renders
       - app_tmp:/app/server_data/tmp
+      - prometheus_data:/tmp/prometheus   # 与 app 共享：multiprocess 指标聚合
     depends_on:
       redis:
         condition: service_healthy
@@ -102,3 +108,4 @@ volumes:
   app_data:        # SQLite（tasks.db）
   app_outputs:     # 成片产物（LocalStorage 模式）或 MinIO 下载缓存
   app_tmp:         # 渲染临时目录
+  prometheus_data: # Prometheus multiprocess 指标共享目录（app+worker）

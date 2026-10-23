@@ -136,5 +136,41 @@ class TestWorkerMetrics(unittest.TestCase):
         self.assertIn("render_running_depth 0.0", body)
 
 
+class TestMultiprocessMetrics(unittest.TestCase):
+    """multiprocess 聚合模式：子进程写共享目录 → 聚合端可见全部进程.
+
+    prometheus_client 的 multiprocess 行为在指标创建（模块导入）时
+    由 PROMETHEUS_MULTIPROC_DIR 决定 → 用子进程真实触发（env 先于
+    import 设置），是最接近生产双进程的验证方式。
+    """
+
+    def test_aggregated_exposition_from_shared_dir(self) -> None:
+        import subprocess
+        import sys
+        mp_dir = Path(tempfile.mkdtemp(prefix="mp_metrics_"))
+        root = Path(__file__).resolve().parents[1]
+        code = (
+            "import server.metrics as m; "
+            "m.RENDER_TOTAL.labels(outcome='success').inc(); "
+            "m.RENDER_ACTIVE.inc(); "
+            "body, _ = m.metrics_response(); "
+            "print(body.decode())"
+        )
+        env = os.environ.copy()
+        env["PROMETHEUS_MULTIPROC_DIR"] = str(mp_dir)
+        proc = subprocess.run([sys.executable, "-c", code], cwd=str(root),
+                              env=env, capture_output=True, text=True,
+                              timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        body = proc.stdout
+        # worker 侧计数经共享目录聚合可见
+        self.assertIn('render_tasks_total{outcome="success"}', body)
+        self.assertIn("render_active", body)
+        # Info（私有 registry 拼接）在 multiprocess 模式下不缺失
+        self.assertIn('version="0.2.0"', body)
+        # 单进程分支回归：聚合路径未破坏默认模式（app_info 恒在位）
+        self.assertIn("app_info", body)
+
+
 if __name__ == "__main__":
     unittest.main()

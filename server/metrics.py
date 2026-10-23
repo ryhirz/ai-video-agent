@@ -29,9 +29,19 @@ import re
 import time
 from typing import Awaitable, Callable
 
-from prometheus_client import (CONTENT_TYPE_LATEST, Counter, Gauge, Histogram,
-                               Info, generate_latest)
+from prometheus_client import (CONTENT_TYPE_LATEST, CollectorRegistry,
+                               Counter, Gauge, Histogram, Info,
+                               generate_latest)
 from prometheus_client.exposition import start_http_server
+
+# ---- multiprocess 模式初始化（必须在指标定义之前）----
+# PROMETHEUS_MULTIPROC_DIR 在进程启动前注入（compose 共享卷）时，
+# 指标值落共享目录的 mmap 文件——API 进程 /metrics 聚合全部进程；
+# worker 无需自有 HTTP 端点。未设置 = 单进程模式（行为与旧版一致）。
+_MULTIPROC_DIR = os.environ.get("PROMETHEUS_MULTIPROC_DIR") or None
+if _MULTIPROC_DIR:
+    os.makedirs(_MULTIPROC_DIR, exist_ok=True)
+MULTIPROC_ENABLED = bool(_MULTIPROC_DIR)
 
 # ---- 指标定义（模块级一次） ----
 
@@ -54,15 +64,26 @@ HTTP_REQUESTS_IN_PROGRESS = Gauge(
     labelnames=("method", "path"),
 )
 
-APP_INFO = Info("app_info", "应用元信息（版本/名称）")
-
-# ---- worker 侧渲染指标（任务体薄壳埋点；eager 模式与 API 同进程，
-#      生产双进程时由 worker 自带 start_http_server 独立暴露） ----
-
+# worker 侧活跃数：multiprocess 模式下按进程求和（livesum）——
+# 每个子进程各持一份 mmap 值，聚合端可见总并发；单进程模式参数被忽略
 RENDER_ACTIVE = Gauge(
     "render_active",
     "worker 正在执行的渲染任务数",
+    multiprocess_mode="livesum",
 )
+
+# Info 指标不被 multiprocess 模式支持（prometheus_client 已知限制）
+# → 放独立私有 registry，metrics_response 手动拼接（两种模式通用）
+_APP_INFO_REGISTRY = CollectorRegistry()
+APP_VERSION = "0.2.0"
+APP_INFO = Info("app_info", "应用元信息（版本/名称）",
+                registry=_APP_INFO_REGISTRY)
+# 模块级注入默认元信息（create_app 之外的进程——如 multiprocess 聚合
+# 子进程——也能暴露版本；与 app.py 的 FastAPI(version=...) 保持一致）
+APP_INFO.info({"version": APP_VERSION, "app": "ai-video-agent"})
+
+# ---- worker 侧渲染指标（任务体薄壳埋点；eager 模式与 API 同进程，
+#      生产双进程时 multiprocess 聚合或 worker 自有端点暴露） ----
 
 RENDER_DURATION = Histogram(
     "render_duration_seconds",
@@ -100,16 +121,19 @@ _worker_server_started = False
 
 
 def start_worker_metrics(port: int | None = None) -> bool:
-    """worker 进程暴露自有指标的 HTTP 端口（prometheus 拉取模型是进程内的，
-    生产双进程部署时 worker 埋点必须自带端点）。
+    """worker 进程暴露自有指标的 HTTP 端口（单进程模式用）。
 
-    返回是否成功绑定；prefork 多并发时仅首个子进程绑定成功，
-    其余 OSError 静默跳过（concurrency>1 需改 multiprocessing 模式，
-    本项目 compose 固定 --concurrency=1，单子进程持有真实计数）。
+    multiprocess 模式（PROMETHEUS_MULTIPROC_DIR 已设）下指标落共享
+    目录、API /metrics 聚合时可见 → **跳过 HTTP 服务器**，返回 False。
+
+    单进程模式下返回是否成功绑定；prefork 多并发时仅首个子进程绑定
+    成功，其余 OSError 静默跳过（concurrency>1 请改用 multiprocess
+    模式而非依赖此端口——单端口只能反映单个子进程）。
     """
     global _worker_server_started
-    if _worker_server_started:
-        return True
+    if MULTIPROC_ENABLED:
+        _worker_server_started = True
+        return False
     port = int(os.environ.get("WORKER_METRICS_PORT", "9101")) \
         if port is None else port
     try:
@@ -173,5 +197,23 @@ def collect_metrics_middleware(app) -> None:
 
 
 def metrics_response() -> tuple[bytes, str]:
-    """渲染 Prometheus 文本格式（供 /metrics 端点直接返回）."""
-    return generate_latest(), CONTENT_TYPE_LATEST
+    """渲染 Prometheus 文本格式（供 /metrics 端点直接返回）.
+
+    单进程模式：generate_latest(默认 REGISTRY)。
+    multiprocess 模式：MultiProcessCollector 从共享目录聚合全部进程
+    的 mmap 值（含 worker 并发子进程）；Info 指标（app_info）不被
+    multiprocess 支持 → 从私有 registry 独立拼接。
+
+    ⚠️ 已知限制（prometheus_client 固有）：进程死亡后其 mmap 文件
+    残留会虚高计数——compose 滚动重部署时清理 prometheus_data 卷，
+    或接受重启窗口内的轻微误差。
+    """
+    if MULTIPROC_ENABLED:
+        from prometheus_client import multiprocess
+        registry = CollectorRegistry()
+        multiprocess.MultiProcessCollector(registry, path=_MULTIPROC_DIR)
+        body = generate_latest(registry)
+    else:
+        body = generate_latest()
+    body += generate_latest(_APP_INFO_REGISTRY)
+    return body, CONTENT_TYPE_LATEST

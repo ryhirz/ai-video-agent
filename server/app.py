@@ -24,7 +24,7 @@ import time
 import uuid
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from structlog.contextvars import bind_contextvars, clear_contextvars
@@ -36,8 +36,8 @@ from .metrics import (APP_INFO, collect_metrics_middleware, metrics_response,
                       refresh_db_gauges)
 from .models import TaskDB, new_task_id, utcnow
 from .state import TaskState
-from .storage import storage_from_env
-from .tasks import configure_runtime, render_video
+from .storage import MinIOStorage, storage_from_env
+from .tasks import celery_app, configure_runtime, get_runtime, render_video
 
 # 日志初始化（模块级一次）：uvicorn server.app:app 的 API 进程入口；
 # LOG_ENV=prod → JSON，dev（默认）→ 彩色文本
@@ -103,7 +103,6 @@ def create_app(db_path: str | Path | None = None,
     # /metrics 端点自身排除，防止自采集递归打点。
     collect_metrics_middleware(app)
     APP_INFO.info({"version": app.version, "app": "ai-video-agent"})
-
     # ---- 可选认证：API_KEY 环境变量在 create_app 时读取一次 ----
     # 未设置 → _expected_key 为 None，依赖直接放行（零开销、向后兼容）
     _expected_key = os.environ.get("API_KEY") or None
@@ -183,6 +182,55 @@ def create_app(db_path: str | Path | None = None,
         refresh_db_gauges(app.state.db)   # DB 权威队列深度（scrape 时快照）
         body, content_type = metrics_response()
         return Response(content=body, media_type=content_type)
+
+    @app.get("/ready")
+    def ready() -> Response:
+        """Readiness 深度探针：DB / Redis broker / MinIO 连通性。
+
+        与 /health（liveness，只探进程可达）互补：依赖不可用时应
+        从负载均衡摘除流量而非重启容器。恒公开（探针无法携带
+        API Key，与 /health 同理）。MinIO 是可选依赖——未配置时
+        标记 skipped 而非失败。
+        """
+        deps: Dict[str, str] = {}
+        ok = True
+
+        # DB（权威状态源）：真实执行一次分组查询，可读即 SQLite 可用
+        try:
+            app.state.db.counts_by_state()
+            deps["db"] = "ok"
+        except Exception as e:                  # noqa: BLE001 —— 探针吞异常降级
+            deps["db"] = f"error: {e}"
+            ok = False
+
+        # Redis broker：真实建立一次连接（超时 2s 快速失败）
+        try:
+            conn = celery_app.connection()
+            try:
+                conn.ensure_connection(max_retries=1, interval_start=0,
+                                       interval_step=0, timeout=2)
+                deps["redis"] = "ok"
+            finally:
+                conn.release()
+        except Exception as e:                  # noqa: BLE001
+            deps["redis"] = f"error: {e}"
+            ok = False
+
+        # MinIO（可选）：配置了端点才检查；未配置 = skipped（非失败）
+        storage = get_runtime().storage
+        if isinstance(storage, MinIOStorage):
+            try:
+                storage.client.list_buckets()
+                deps["minio"] = "ok"
+            except Exception as e:              # noqa: BLE001
+                deps["minio"] = f"error: {e}"
+                ok = False
+        else:
+            deps["minio"] = "skipped"
+
+        payload = {"status": "ready" if ok else "not_ready",
+                   "dependencies": deps}
+        return JSONResponse(payload, status_code=200 if ok else 503)
 
     # 前端阶段1（最小预览页）：/app 同源服务 static/index.html ——
     # 避免 file:// 打开时的跨域拦截；仅挂载静态文件，业务路由零改动
