@@ -40,3 +40,6 @@ _verify/_out_*.log
 
 # MinIO 便携版（尝试目录，二进制已下线）
 tools/minio/
+
+# server 运行时数据（DB/素材/渲染产物——冒烟与端到端验证的本地产物）
+server/server_data/
