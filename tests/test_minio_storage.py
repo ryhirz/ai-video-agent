@@ -3,8 +3,9 @@
 - 单元（必跑）：桩 Minio 客户端验证上传 / 惰性下载缓存 / 装配点切换 ——
   不依赖真实服务，与 eager 优先的测试策略一致
 - 真实冒烟（skipif）：设 MINIO_ENDPOINT 环境变量后自动启用
-  （dl.min.io 公开二进制已下线 410，本机无 WSL/docker，真实实例
-  留待有容器环境时验证；测试与 Redis 冒烟同型）
+  （真实服务二进制从 minio/minio GitHub Release 获取并 SHA256 校验，
+  已随 _verify/minio_live_e2e.py 完成端到端真验证；测试与 Redis
+  冒烟同型，无 MinIO 时自动跳过）
 """
 from __future__ import annotations
 
@@ -95,8 +96,15 @@ class TestMinIOStorageUnit(unittest.TestCase):
 class TestStorageWiring(unittest.TestCase):
     """装配点：MINIO_ENDPOINT 开关切换 Local ↔ MinIO。"""
 
+    def setUp(self) -> None:
+        # 隔离全局环境：暂存并移除 MINIO_ENDPOINT，tearDown 按原样恢复
+        # （否则设了 MINIO_ENDPOINT 跑真实冒烟时，default 分支会被污染）
+        self._saved_endpoint = os.environ.pop("MINIO_ENDPOINT", None)
+
     def tearDown(self) -> None:
         os.environ.pop("MINIO_ENDPOINT", None)
+        if self._saved_endpoint is not None:
+            os.environ["MINIO_ENDPOINT"] = self._saved_endpoint
 
     def test_default_is_local(self) -> None:
         tmp = Path(tempfile.mkdtemp(prefix="wire_"))
@@ -115,7 +123,12 @@ class TestStorageWiring(unittest.TestCase):
         self.assertEqual(_FakeMinio.last_init["access_key"], "minioadmin")
 
 
-@unittest.skipIf(not os.environ.get("MINIO_ENDPOINT"),
+# 导入期捕获端点：skipIf 在收集期判定，而其他测试类的 tearDown 可能
+# 恢复/移除运行时环境变量 —— 用快照保证判定与取值一致
+_LIVE_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "")
+
+
+@unittest.skipIf(not _LIVE_ENDPOINT,
                  "真实 MinIO 未配置（MINIO_ENDPOINT 未设）——环境就绪后补")
 class TestMinIOLiveSmoke(unittest.TestCase):
     """真实 MinIO 端到端冒烟（与 Celery 真队列冒烟同型）。"""
@@ -124,7 +137,7 @@ class TestMinIOLiveSmoke(unittest.TestCase):
         tmp = Path(tempfile.mkdtemp(prefix="minio_live_"))
         src = tmp / "out.mp4"
         src.write_bytes(os.urandom(1024))
-        st = MinIOStorage(os.environ["MINIO_ENDPOINT"],
+        st = MinIOStorage(_LIVE_ENDPOINT,
                           os.environ.get("MINIO_ACCESS_KEY", "minioadmin"),
                           os.environ.get("MINIO_SECRET_KEY", "minioadmin"),
                           os.environ.get("MINIO_BUCKET", "renders"),
