@@ -32,8 +32,8 @@
 | F9 | ffmpeg 进度解析（`time=` → progress） | P1 | 第三步 ✅ | stderr 流式解析，progress ≥1s 节流写库 |
 | F10 | 流式取消（两步杀进程） | P1 | 第三步 ✅ | `proc.terminate` → 宽限 5s → `proc.kill` |
 | F11 | TIMEOUT 启用 | P1 | 第三步 ✅ | `soft_time_limit=540` 捕获后优雅落 TIMEOUT；`time_limit=600` 硬杀兜底 |
-| F12 | webhook 回调 | P2 | 第四步 | 字段已入库未实现，回调契约见 API 文档 §7 |
-| F13 | MinIO 对象存储 | P2 | 第四步 | Storage 接口已抽象，切实现零改动上层 |
+| F12 | webhook 回调 | P2 | 第四步 ✅ | 终态 POST（重试 10s/60s/300s，单次 10s 超时），契约见 API 文档 §7 |
+| F13 | MinIO 对象存储 | P2 | 第四步 ✅ | MinIOStorage 经 storage_from_env 装配（MINIO_ENDPOINT 切换）；真实实例冒烟待容器环境（skipif） |
 | F14 | 最小预览页 | P1 | 前端·阶段1 | 提交/查询/下载三区单页 |
 | F15 | 时间轴编辑器 | P2 | 前端·阶段2 | 轨道/属性面板/manifest 驱动表单 |
 

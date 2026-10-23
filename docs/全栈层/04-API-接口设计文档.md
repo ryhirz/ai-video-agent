@@ -36,7 +36,7 @@
 | timeline | object | ✓ | 时间线 JSON；合法性由编译器 `compile` 预检异步校验 |
 | options | object | — | 渲染选项，默认 `{}` |
 | user_id | string | — | 默认 `"local"`（无认证版） |
-| webhook_url | string | — | ⚠️ **已入库未实现**：本字段会被保存，但第四步前不会回调 |
+| webhook_url | string | — | ✅ 第四步起生效：任务终态后服务端 POST 此地址（见 §7） |
 
 **成功 202**：
 
@@ -95,7 +95,7 @@
 
 用途：前端动态表单数据源；新增操作只改 registry，接口与前端零改动。
 
-## 7. Webhook 回调契约（⬜ 第四步实现，先冻结契约）
+## 7. Webhook 回调契约（✅ 第四步已实现，契约不变）
 
 - 触发时机：任务进入终态（success / failed / cancelled / timeout）后回调
 - 方向：服务端 POST 用户提交的 `webhook_url`

@@ -24,7 +24,7 @@ from ai_video_agent.registry import capability_manifest
 
 from .models import TaskDB, new_task_id, utcnow
 from .state import TaskState
-from .storage import LocalStorage
+from .storage import storage_from_env
 from .tasks import configure_runtime, render_video
 
 _DEFAULT_ROOT = Path(__file__).resolve().parent / "server_data"
@@ -47,7 +47,8 @@ def create_app(db_path: str | Path | None = None,
         p.mkdir(parents=True, exist_ok=True)
 
     db = TaskDB(str(db_path))
-    storage = LocalStorage(storage_root)
+    # 装配点（第四步）：MINIO_ENDPOINT 环境变量存在 → MinIO，否则本地 FS
+    storage = storage_from_env(storage_root)
     # eager / API 进程内：任务体直接使用本 app 的资源实例（ADR-1）
     configure_runtime(db, storage, tmp_root)
 

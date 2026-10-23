@@ -37,3 +37,6 @@ _verify/_qwen_server.log
 # Redis 便携版（运行时下载/解压，非源码）
 tools/redis/
 _verify/_out_*.log
+
+# MinIO 便携版（尝试目录，二进制已下线）
+tools/minio/
