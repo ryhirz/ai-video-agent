@@ -2,7 +2,7 @@
 
 架构决策（ADR-1 / ADR-2 / ADR-3，见 docs/全栈层/05-整体架构说明.md）：
 - 测试策略：eager 为主（pytest 设 task_always_eager=True）+ 真队列冒烟 skipif
-- 取消：DB 查询态 —— API 只把 state 置 CANCELLED，任务体在三个检查点查 DB
+- 取消：DB 查询态 —— API 只把 state 置 CANCELLED，任务体在四个检查点查 DB
 - 超时：soft_time_limit=540 捕获 SoftTimeLimitExceeded 优雅落 TIMEOUT；
         time_limit=600 硬杀兜底 + 任务体入口检查 created_at 距今超限直接
         落 TIMEOUT，防「硬杀 → reject 重回队列 → 再次渲染」死循环。

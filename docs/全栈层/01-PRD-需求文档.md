@@ -26,7 +26,7 @@
 | F3 | 成片下载 | P0 | 第一步 ✅ | 仅 SUCCESS 态可下载 |
 | F4 | 能力清单查询 | P0 | 第一步 ✅ | 前端动态表单数据源 |
 | F5 | Celery + Redis 异步执行 | P0 | **第二步** | `render_video.delay` 替换 ThreadPool 占位 |
-| F6 | 软取消（DB 查询态） | P0 | **第二步** | 拍板：API 只置 DB state=CANCELLED，worker 三个检查点查 DB |
+| F6 | 软取消（DB 查询态） | P0 | **第二步** | 拍板：API 只置 DB state=CANCELLED，worker 四个检查点查 DB |
 | F7 | 测试策略落地（eager 为主） | P0 | **第二步** | 拍板：`task_always_eager=True` 为主 + 真队列冒烟 skipif（本机暂无 Redis，后补） |
 | F8 | 依赖显式化 | P0 | **第二步** | requirements.in 显式声明 celery[redis]/fastapi/uvicorn/sqlalchemy |
 | F9 | ffmpeg 进度解析（`time=` → progress） | P1 | 第三步 ✅ | stderr 流式解析，progress ≥1s 节流写库 |

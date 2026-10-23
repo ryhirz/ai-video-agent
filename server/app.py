@@ -3,7 +3,7 @@
 POST   /render                  提交渲染任务（202）→ render_video.delay
 GET    /render/{id}             查询状态/进度
 POST   /render/{id}/cancel      软取消（DB 查询态：只置 state=CANCELLED，
-                                worker 三个检查点查 DB 生效，终态幂等）
+                                worker 四个检查点查 DB 生效，终态幂等）
 GET    /render/{id}/download    下载成片（仅 SUCCESS）
 GET    /manifest                能力清单（前端动态渲染参数表单）
 
