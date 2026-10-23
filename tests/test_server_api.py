@@ -153,6 +153,39 @@ class TestServerApi(unittest.TestCase):
         self.assertEqual(row["started_at"], None)     # 未进入 RUNNING 推进
         self.assertFalse((Path(self.tmp) / "tmp" / tid).exists())
 
+    def test_midrender_cancel(self) -> None:
+        """渲染中段取消：RUNNING 后置 CANCELLED → ffmpeg 被两步杀 →
+        终态保持 CANCELLED（不被 FAILED 覆盖）。任务体在后台线程执行。"""
+        import threading
+        db = self.client.app.state.db
+        long_src = self.tmp / "long60.mp4"
+        _gen_source(long_src, 60.0)
+        tid = "midrender-cancel-0001"
+        db.create(tid, "local", _timeline(str(long_src), 60.0), {}, None)
+
+        th = threading.Thread(target=render_video,
+                              args=(tid, _timeline(str(long_src), 60.0)))
+        th.start()
+        deadline = time.time() + 30
+        while time.time() < deadline and db.get(tid)["state"] != "running":
+            time.sleep(0.05)
+        self.assertEqual(db.get(tid)["state"], "running")
+        time.sleep(1.5)                       # 让 ffmpeg 真正跑起来
+
+        c = self.client.post(f"/render/{tid}/cancel").json()
+        self.assertEqual(c["state"], "cancelled")
+
+        th.join(timeout=60)
+        self.assertFalse(th.is_alive(), "任务体未在 60s 内退出")
+        row = db.get(tid)
+        self.assertEqual(row["state"], "cancelled")   # 中段取消 → 保持 CANCELLED
+        self.assertIsNotNone(row["started_at"])
+        self.assertIsNotNone(row["finished_at"])
+        self.assertEqual(row["error_msg"], None)
+        # 已取消任务不可下载
+        self.assertEqual(
+            self.client.get(f"/render/{tid}/download").status_code, 400)
+
     def test_timeout_entry_check(self) -> None:
         """超时衔接（ADR-3）：created_at 距今超过 time_limit → 直接落 TIMEOUT。"""
         db = self.client.app.state.db

@@ -29,9 +29,9 @@
 | F6 | 软取消（DB 查询态） | P0 | **第二步** | 拍板：API 只置 DB state=CANCELLED，worker 三个检查点查 DB |
 | F7 | 测试策略落地（eager 为主） | P0 | **第二步** | 拍板：`task_always_eager=True` 为主 + 真队列冒烟 skipif（本机暂无 Redis，后补） |
 | F8 | 依赖显式化 | P0 | **第二步** | requirements.in 显式声明 celery[redis]/fastapi/uvicorn/sqlalchemy |
-| F9 | ffmpeg 进度解析（`time=` → progress） | P1 | 第三步 | 流式解析替代检查点间 0.0/1.0 二值进度 |
-| F10 | 流式取消（两步杀进程） | P1 | 第三步 | `proc.terminate` → 宽限 → `proc.kill` |
-| F11 | TIMEOUT 启用 | P1 | 第三步 | `soft_time_limit=540` 捕获后优雅落 TIMEOUT；`time_limit=600` 硬杀兜底 |
+| F9 | ffmpeg 进度解析（`time=` → progress） | P1 | 第三步 ✅ | stderr 流式解析，progress ≥1s 节流写库 |
+| F10 | 流式取消（两步杀进程） | P1 | 第三步 ✅ | `proc.terminate` → 宽限 5s → `proc.kill` |
+| F11 | TIMEOUT 启用 | P1 | 第三步 ✅ | `soft_time_limit=540` 捕获后优雅落 TIMEOUT；`time_limit=600` 硬杀兜底 |
 | F12 | webhook 回调 | P2 | 第四步 | 字段已入库未实现，回调契约见 API 文档 §7 |
 | F13 | MinIO 对象存储 | P2 | 第四步 | Storage 接口已抽象，切实现零改动上层 |
 | F14 | 最小预览页 | P1 | 前端·阶段1 | 提交/查询/下载三区单页 |

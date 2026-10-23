@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import time as _time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -145,8 +146,19 @@ def render_video(self, task_id: str, timeline_json: Dict[str, Any]) -> None:
         return
 
     out_dir = rt.tmp_root / task_id
+    last_progress_write = [0.0]     # monotonic 时刻；进度写库节流 ≥1s
+
+    def _on_progress(p: float) -> None:
+        now = _time.monotonic()
+        if now - last_progress_write[0] < 1.0:
+            return
+        last_progress_write[0] = now
+        db.update(task_id, progress=round(min(p, 1.0), 4))
+
     try:
-        path, msg = render(tl, base_dir=str(out_dir))
+        path, msg = render(tl, base_dir=str(out_dir),
+                           on_progress=_on_progress,
+                           cancel_check=lambda: _is_cancelled_in_db(db, task_id))
     except SoftTimeLimitExceeded:
         db.update(task_id, state=TaskState.TIMEOUT,
                   error_msg="Task exceeded soft time limit (540s)",
@@ -159,6 +171,11 @@ def render_video(self, task_id: str, timeline_json: Dict[str, Any]) -> None:
         rt.cleanup_tmp(task_id)
         return
     if not path:
+        # 中段取消：ffmpeg 已被 cancel_check 杀掉，DB 保持 CANCELLED
+        # （API 早已写好终态；此处若落 FAILED 会把取消覆盖掉）
+        if _is_cancelled_in_db(db, task_id):
+            rt.cleanup_tmp(task_id)
+            return
         db.update(task_id, state=TaskState.FAILED,
                   error_msg=f"Render failed: {msg}", finished_at=utcnow())
         rt.cleanup_tmp(task_id)

@@ -62,7 +62,7 @@
 
 **错误**：404 `{"detail": "Task not found"}`
 
-> 第三步增强：progress 由 ffmpeg `time=` 流式解析驱动（当前为检查点离散值）。
+> 第三步已实现：progress 由 ffmpeg `time=` 流式解析驱动（≥1s 节流写库，0.0→1.0 连续）。
 
 ## 4. POST /render/{task_id}/cancel — 软取消
 
