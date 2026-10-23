@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 视频剪辑智能体 · 渲染控制台</title>
+<style>
+/* ============ Apple 极简风 tokens（项目统一视觉规范） ============
+   白底 + 主色 #007AFF；卡片 12px 圆角、按钮 8px 圆角、无阴影、细边分层 */
+:root {
+  --primary: #007AFF;
+  --bg: #FFFFFF;
+  --bg-sub: #F5F5F7;
+  --border: #E5E5EA;
+  --text: #1D1D1F;
+  --text-sub: #86868B;
+  --green: #34C759;
+  --red: #FF3B30;
+  --orange: #FF9500;
+  --gray: #8E8E93;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: var(--bg); color: var(--text);
+  max-width: 760px; margin: 0 auto; padding: 32px 20px 64px;
+  font-size: 14px; line-height: 1.55;
+}
+header h1 { font-size: 22px; font-weight: 600; }
+header p { color: var(--text-sub); margin-top: 4px; }
+.card {
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 12px; padding: 20px; margin-top: 16px;
+}
+.card h2 {
+  font-size: 15px; font-weight: 600; margin-bottom: 12px;
+  display: flex; align-items: center; gap: 8px;
+}
+.card h2 .no {
+  width: 20px; height: 20px; border-radius: 50%;
+  background: var(--primary); color: #fff;
+  font-size: 12px; display: inline-flex;
+  align-items: center; justify-content: center;
+}
+label { display: block; font-size: 12px; color: var(--text-sub); margin: 10px 0 4px; }
+input[type=text], textarea {
+  width: 100%; border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 10px; font-size: 13px; font-family: inherit;
+  background: var(--bg); color: var(--text); outline: none;
+}
+input[type=text]:focus, textarea:focus { border-color: var(--primary); }
+textarea { min-height: 180px; font-family: ui-monospace, Consolas, monospace;
+           font-size: 12px; resize: vertical; }
+.row { display: flex; gap: 10px; }
+.row > * { flex: 1; }
+.btn {
+  border: none; border-radius: 8px; padding: 9px 18px;
+  font-size: 14px; font-weight: 500; cursor: pointer;
+  background: var(--bg-sub); color: var(--text); margin-top: 14px;
+}
+.btn.primary { background: var(--primary); color: #fff; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn.primary:not(:disabled):hover { opacity: .88; }
+/* ---- 六态徽章 ---- */
+.badge {
+  display: inline-block; padding: 3px 12px; border-radius: 100px;
+  font-size: 12px; font-weight: 600; color: #fff;
+}
+.badge.pending   { background: var(--gray); }
+.badge.running   { background: var(--primary); }
+.badge.success   { background: var(--green); }
+.badge.failed    { background: var(--red); }
+.badge.cancelled { background: var(--orange); }
+.badge.timeout   { background: var(--orange); }
+.badge.idle      { background: var(--border); color: var(--text-sub); }
+/* ---- 进度条 ---- */
+.progress-track {
+  height: 8px; background: var(--bg-sub); border-radius: 100px;
+  margin-top: 12px; overflow: hidden;
+}
+.progress-bar {
+  height: 100%; width: 0%; background: var(--primary);
+  border-radius: 100px; transition: width .4s ease;
+}
+.meta { font-size: 12px; color: var(--text-sub); margin-top: 10px;
+        word-break: break-all; }
+.err {
+  margin-top: 10px; padding: 10px 12px; border-radius: 8px;
+  background: #FFF2F1; color: var(--red); font-size: 12px;
+  word-break: break-all; display: none;
+}
+video { width: 100%; border-radius: 12px; background: #000;
+        display: none; margin-top: 4px; }
+.actions { display: flex; gap: 10px; margin-top: 12px; }
+a.dl {
+  display: inline-block; text-decoration: none;
+  background: var(--primary); color: #fff; border-radius: 8px;
+  padding: 9px 18px; font-size: 14px; font-weight: 500;
+}
+details summary { cursor: pointer; font-weight: 600; font-size: 15px; }
+details .op { padding: 8px 0; border-bottom: 1px solid var(--bg-sub);
+              font-size: 13px; }
+details .op b { color: var(--primary); }
+details .op span { color: var(--text-sub); }
+.empty { color: var(--text-sub); font-size: 13px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>AI 视频剪辑智能体 · 渲染控制台</h1>
+  <p>提交 timeline → 轮询进度 → 预览/下载成片（FastAPI + Celery 后端）</p>
+</header>
+
+<!-- ① 提交区 -->
+<section class="card">
+  <h2><span class="no">1</span>提交渲染任务</h2>
+  <label>素材绝对路径（填入后可一键生成示例 timeline）</label>
+  <input type="text" id="srcPath" placeholder="例：E:\media\sample.mp4">
+  <label>timeline JSON</label>
+  <textarea id="timeline" placeholder='粘贴 timeline JSON，或点击「填入示例」'></textarea>
+  <label>webhook_url（可选：任务终态后服务端回调此地址）</label>
+  <input type="text" id="webhookUrl" placeholder="例：http://127.0.0.1:9000/callback">
+  <div class="actions">
+    <button class="btn" id="fillBtn">填入示例</button>
+    <button class="btn primary" id="submitBtn">提交渲染</button>
+  </div>
+  <div class="err" id="submitErr"></div>
+</section>
+
+<!-- ② 状态区 -->
+<section class="card">
+  <h2><span class="no">2</span>任务状态</h2>
+  <label>已有 task_id（可跨刷新恢复轮询）</label>
+  <div class="row">
+    <input type="text" id="restoreId" placeholder="粘贴 task_id">
+    <button class="btn" id="restoreBtn" style="flex:0 0 auto">恢复查询</button>
+  </div>
+  <div style="margin-top:14px">
+    <span class="badge idle" id="badge">未开始</span>
+    <span class="meta" id="taskIdText" style="display:inline"></span>
+  </div>
+  <div class="progress-track"><div class="progress-bar" id="progressBar"></div></div>
+  <div class="meta" id="progressText">progress：—</div>
+  <div class="err" id="stateErr"></div>
+</section>
+
+<!-- ③ 结果区 -->
+<section class="card">
+  <h2><span class="no">3</span>结果预览</h2>
+  <p class="empty" id="resultEmpty">任务成功后此处显示成片预览与下载。</p>
+  <video id="video" controls></video>
+  <div class="actions" id="resultActions" style="display:none">
+    <a class="dl" id="dlLink" href="#" download>下载成片</a>
+  </div>
+</section>
+
+<!-- ④ 能力清单 -->
+<section class="card">
+  <details>
+    <summary>能力清单（GET /manifest，操作类型与参数约束）</summary>
+    <div id="manifestBody" style="margin-top:12px">
+      <p class="empty">加载中…</p>
+    </div>
+  </details>
+</section>
+
+<script>
+"use strict";
+/* ================= 常量与元素 ================= */
+var API = "";                      // 同源（由 FastAPI 挂载在 /app 下）
+var TERMINAL = { success: 1, failed: 1, cancelled: 1, timeout: 1 };
+var BADGE_TEXT = {
+  pending: "排队中", running: "渲染中", success: "成功",
+  failed: "失败", cancelled: "已取消", timeout: "超时", idle: "未开始"
+};
+var $ = function (id) { return document.getElementById(id); };
+var pollTimer = null;              // 轮询句柄
+var currentTaskId = null;
+
+/* ================= 工具函数 ================= */
+function setBadge(state) {
+  var b = $("badge");
+  b.className = "badge " + state;
+  b.textContent = BADGE_TEXT[state] || state;
+}
+function setProgress(p) {
+  var v = (typeof p === "number") ? Math.round(p * 100) : 0;
+  $("progressBar").style.width = v + "%";
+  $("progressText").textContent =
+      (typeof p === "number") ? ("progress：" + v + "%") : "progress：—";
+}
+function showErr(id, msg) {
+  var el = $(id);
+  if (msg) { el.textContent = msg; el.style.display = "block"; }
+  else { el.style.display = "none"; }
+}
+function stopPolling() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+
+/* ================= 状态轮询（1s 间隔，终态停止） ================= */
+function startPolling(taskId) {
+  stopPolling();
+  currentTaskId = taskId;
+  $("taskIdText").textContent = "task_id：" + taskId;
+  $("resultEmpty").style.display = "";
+  $("video").style.display = "none";
+  $("resultActions").style.display = "none";
+  showErr("stateErr", null);
+
+  function tick() {
+    fetch(API + "/render/" + encodeURIComponent(taskId))
+      .then(function (r) {
+        if (!r.ok) throw new Error("查询失败 HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (body) {
+        setBadge(body.state);
+        setProgress(body.progress);
+        if (body.state === "failed" || body.state === "timeout") {
+          showErr("stateErr", "error_msg：" + (body.error_msg || "未知错误"));
+        } else if (body.state === "cancelled") {
+          showErr("stateErr", null);
+        }
+        if (TERMINAL[body.state]) {
+          stopPolling();
+          if (body.state === "success") showResult(taskId);
+        }
+      })
+      .catch(function (e) {
+        stopPolling();
+        showErr("stateErr", "轮询中断：" + e.message);
+      });
+  }
+  tick();
+  pollTimer = setInterval(tick, 1000);
+}
+
+/* ================= 结果区 ================= */
+function showResult(taskId) {
+  var url = API + "/render/" + encodeURIComponent(taskId) + "/download";
+  $("resultEmpty").style.display = "none";
+  var v = $("video");
+  v.src = url;
+  v.style.display = "block";
+  $("dlLink").href = url;
+  $("resultActions").style.display = "flex";
+}
+
+/* ================= 提交渲染 ================= */
+$("submitBtn").onclick = function () {
+  showErr("submitErr", null);
+  var tl;
+  try { tl = JSON.parse($("timeline").value); }
+  catch (e) { showErr("submitErr", "timeline JSON 解析失败：" + e.message); return; }
+  var payload = { timeline: tl, options: {}, user_id: "web" };
+  var wh = $("webhookUrl").value.trim();
+  if (wh) payload.webhook_url = wh;
+  this.disabled = true;
+  var btn = this;
+  fetch(API + "/render", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  })
+    .then(function (r) {
+      if (r.status !== 202) return r.json().then(function (j) {
+        throw new Error("HTTP " + r.status + " " + JSON.stringify(j));
+      });
+      return r.json();
+    })
+    .then(function (body) { startPolling(body.task_id); })
+    .catch(function (e) { showErr("submitErr", "提交失败：" + e.message); })
+    .finally(function () { btn.disabled = false; });
+};
+
+/* ================= 恢复查询 ================= */
+$("restoreBtn").onclick = function () {
+  var id = $("restoreId").value.trim();
+  if (!id) { showErr("stateErr", "请先输入 task_id"); return; }
+  startPolling(id);
+};
+
+/* ================= 示例 timeline（素材路径自动填入 sourceRef） ================= */
+$("fillBtn").onclick = function () {
+  var src = $("srcPath").value.trim() || "__替换为素材绝对路径__";
+  var sample = {
+    schemaVersion: "1.0.0", fps: 30,
+    resolution: { w: 640, h: 360 }, duration: 3.0,
+    tracks: [
+      { id: "v_main", type: "video" },
+      { id: "a_main", type: "audio" }
+    ],
+    clips: [
+      { id: "c1", track: "v_main", sourceRef: src,
+        "in": 0.0, out: 3.0, sourceIn: 0.0, sourceOut: 3.0 },
+      { id: "a1", track: "a_main", sourceRef: src,
+        "in": 0.0, out: 3.0, sourceIn: 0.0, sourceOut: 3.0 }
+    ],
+    subtitles: [], transitions: [], texts: []
+  };
+  $("timeline").value = JSON.stringify(sample, null, 2);
+};
+
+/* ================= 能力清单（/manifest 动态渲染） ================= */
+fetch(API + "/manifest")
+  .then(function (r) { return r.json(); })
+  .then(function (m) {
+    /* operations 是操作名字符串数组（如 add_bgm/…共 11 类）；
+       其余顶层键为各操作的参数约束（transform/speed/transition_types 等） */
+    var ops = m.operations || [];
+    var html = '<div class="op"><b>支持操作（' + ops.length + ' 类）</b> ' +
+               '<span>' + ops.join("、") + "</span></div>";
+    ["transform", "speed", "transition", "transition_types",
+     "gap_policy", "subtitle_style", "partial_audio_policy"]
+      .forEach(function (k) {
+        if (m[k] === undefined) return;
+        html += '<div class="op"><b>' + k + "</b> <span>" +
+                JSON.stringify(m[k]) + "</span></div>";
+      });
+    $("manifestBody").innerHTML = html;
+  })
+  .catch(function () {
+    $("manifestBody").innerHTML =
+      '<p class="empty">清单加载失败（后端未启动？）——提交/轮询功能不受影响</p>';
+  });
+</script>
+</body>
+</html>

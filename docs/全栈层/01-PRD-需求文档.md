@@ -34,7 +34,7 @@
 | F11 | TIMEOUT 启用 | P1 | 第三步 ✅ | `soft_time_limit=540` 捕获后优雅落 TIMEOUT；`time_limit=600` 硬杀兜底 |
 | F12 | webhook 回调 | P2 | 第四步 ✅ | 终态 POST（重试 10s/60s/300s，单次 10s 超时），契约见 API 文档 §7 |
 | F13 | MinIO 对象存储 | P2 | 第四步 ✅ | MinIOStorage 经 storage_from_env 装配（MINIO_ENDPOINT 切换）；真实实例冒烟待容器环境（skipif） |
-| F14 | 最小预览页 | P1 | 前端·阶段1 | 提交/查询/下载三区单页 |
+| F14 | 最小预览页 | P1 | 前端·阶段1 ✅ | 单文件 HTML 三区（提交/状态/结果），挂载 /app 同源 |
 | F15 | 时间轴编辑器 | P2 | 前端·阶段2 | 轨道/属性面板/manifest 驱动表单 |
 
 ## 3. 用户故事与验收标准

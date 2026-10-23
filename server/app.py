@@ -18,6 +18,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from ai_video_agent.registry import capability_manifest
@@ -104,6 +105,13 @@ def create_app(db_path: str | Path | None = None,
     @app.get("/manifest")
     def get_manifest() -> Dict[str, Any]:
         return capability_manifest()
+
+    # 前端阶段1（最小预览页）：/app 同源服务 static/index.html ——
+    # 避免 file:// 打开时的跨域拦截；仅挂载静态文件，业务路由零改动
+    _static_dir = Path(__file__).resolve().parent / "static"
+    if _static_dir.is_dir():
+        app.mount("/app", StaticFiles(directory=str(_static_dir), html=True),
+                  name="frontend")
 
     return app
 
