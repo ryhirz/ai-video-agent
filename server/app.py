@@ -24,7 +24,7 @@ import time
 import uuid
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from structlog.contextvars import bind_contextvars, clear_contextvars
@@ -32,6 +32,7 @@ from structlog.contextvars import bind_contextvars, clear_contextvars
 from ai_video_agent.registry import capability_manifest
 
 from .logging import configure_structlog, get_logger
+from .metrics import APP_INFO, collect_metrics_middleware, metrics_response
 from .models import TaskDB, new_task_id, utcnow
 from .state import TaskState
 from .storage import storage_from_env
@@ -95,6 +96,12 @@ def create_app(db_path: str | Path | None = None,
                   duration_ms=round((time.perf_counter() - _start) * 1000, 1))
         response.headers["X-Request-ID"] = request_id
         return response
+
+    # ---- Prometheus 指标采集（可观测性：请求计数/耗时/并发）----
+    # 在 request_id 中间件之后注册（栈内层），度量真实下游耗时；
+    # /metrics 端点自身排除，防止自采集递归打点。
+    collect_metrics_middleware(app)
+    APP_INFO.info({"version": app.version, "app": "ai-video-agent"})
 
     # ---- 可选认证：API_KEY 环境变量在 create_app 时读取一次 ----
     # 未设置 → _expected_key 为 None，依赖直接放行（零开销、向后兼容）
@@ -168,6 +175,12 @@ def create_app(db_path: str | Path | None = None,
         后续 /ready 按需扩展）。
         """
         return {"status": "ok", "version": app.version}
+
+    @app.get("/metrics", include_in_schema=False)
+    def metrics() -> Response:
+        """Prometheus 抓取端点（公开：抓取器无法携带 API Key，与 /health 同理）."""
+        body, content_type = metrics_response()
+        return Response(content=body, media_type=content_type)
 
     # 前端阶段1（最小预览页）：/app 同源服务 static/index.html ——
     # 避免 file:// 打开时的跨域拦截；仅挂载静态文件，业务路由零改动

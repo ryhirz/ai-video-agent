@@ -37,6 +37,7 @@ uvicorn>=0.23,<1        # ASGI 服务器；环境实测 0.53.0（原为 gradio �
 sqlalchemy>=2.0,<3      # render_tasks DAL；环境实测 2.1.6
 minio>=7.0,<8           # 对象存储 SDK（第四步 MinIOStorage）；环境实测 7.2.20
 structlog>=24.1,<27     # 结构化日志（dev 彩色 / prod JSON 双模）；环境实测 26.1.0，零运行时依赖
+prometheus-client>=0.20,<1  # Prometheus 指标暴露（/metrics：请求计数/耗时/并发）；环境实测 0.26.0
 
 
 # ---------- 测试工具 ----------
