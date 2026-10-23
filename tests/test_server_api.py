@@ -291,5 +291,41 @@ class TestAuthApi(unittest.TestCase):
             self.client_on.get(f"/render/{tid}/download").status_code, 401)
 
 
+class TestHealthApi(unittest.TestCase):
+    """GET /health：公开探针端点（容器编排 liveness/readiness 前置）。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        from unittest import mock
+        celery_app.conf.task_always_eager = True
+        cls.tmp = Path(tempfile.mkdtemp(prefix="health_"))
+        from server.app import create_app
+        # 认证开启的实例：验证 /health 不受 API_KEY 影响（探针无凭证）
+        with mock.patch.dict(os.environ, {"API_KEY": "hkey"}, clear=False):
+            cls.client = TestClient(create_app(
+                db_path=cls.tmp / "tasks.db",
+                storage_root=cls.tmp / "renders",
+                tmp_root=cls.tmp / "tmp"))
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.client.close()
+        import shutil
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_health_ok(self) -> None:
+        r = self.client.get("/health")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["status"], "ok")
+        self.assertIn("version", r.json())
+
+    def test_health_public_even_with_api_key(self) -> None:
+        """API_KEY 开启时 /health 仍公开；业务路由照常 401（对照）。"""
+        self.assertEqual(self.client.get("/health").status_code, 200)
+        self.assertEqual(
+            self.client.post("/render", json={"timeline": {}}).status_code,
+            401)
+
+
 if __name__ == "__main__":
     unittest.main()

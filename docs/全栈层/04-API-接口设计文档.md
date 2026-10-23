@@ -1,7 +1,7 @@
 # AI 视频剪辑智能体 — 全栈层 API 接口设计文档
 
 > 版本：v1.0 · 日期：2026-10-23
-> 上游依据：PRD v1.0 · 现有实现 `server/app.py`（5 路由 + /manifest，与代码逐条核对）
+> 上游依据：PRD v1.0 · 现有实现 `server/app.py`（5 路由 + /manifest + /health，与代码逐条核对）
 > Base URL：`http://localhost:8000`（`uvicorn server.app:app` 默认）
 > 认证（可选，2026-10-23 落地）：环境变量 `API_KEY` **未设置 = 无认证**（历史行为）；
 > **设置后** `/render*` 四条业务路由要求 `X-API-Key` 请求头**或** `?api_key=` 查询参数
@@ -19,6 +19,7 @@
 | POST | /render/{task_id}/cancel | 200 | 软取消 | ✅ 第一步（第二步改 DB 查询态） |
 | GET | /render/{task_id}/download | 200 | 成片下载 | ✅ 第一步 |
 | GET | /manifest | 200 | 能力清单 | ✅ 第一步 |
+| GET | /health | 200 | 健康探针（公开） | ✅ 可观测性起步 |
 | POST | （webhook 回调，服务端→用户） | — | 任务终态回调 | ⬜ 第四步 |
 
 ## 2. POST /render — 提交渲染任务
@@ -97,6 +98,21 @@
 **成功 200**：返回 `ai_video_agent/registry::capability_manifest()` 全量 JSON（`capability_manifest.json` 同源，registry 单一真相）。
 
 用途：前端动态表单数据源；新增操作只改 registry，接口与前端零改动。
+
+## 6.1 GET /health — 健康探针（✅ 可观测性起步）
+
+**成功 200**：
+
+```json
+{ "status": "ok", "version": "0.2.0" }
+```
+
+- **恒公开**：容器编排（docker-compose / K8s）探针无法携带 API Key，
+  `API_KEY` 开启时本端点也不要求凭证（与 /manifest、/app 同属公开面）
+- 语义：进程可达性（liveness）——不探 DB/broker 深度依赖；就绪细节
+  留待后续按需扩展 /ready
+- 用途：compose `healthcheck` / K8s `livenessProbe`/`readinessProbe` /
+  负载均衡器健康检查的直接对接点
 
 ## 7. Webhook 回调契约（✅ 第四步已实现，契约不变）
 

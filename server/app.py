@@ -129,6 +129,16 @@ def create_app(db_path: str | Path | None = None,
     def get_manifest() -> Dict[str, Any]:
         return capability_manifest()
 
+    @app.get("/health")
+    def health() -> Dict[str, str]:
+        """Liveness/readiness 探针端点（可观测性起步）。
+
+        保持公开：容器编排（compose/K8s）探针无法携带 API Key；
+        仅返回进程可达性，不探 DB/broker 深度依赖（就绪细节留待
+        后续 /ready 按需扩展）。
+        """
+        return {"status": "ok", "version": app.version}
+
     # 前端阶段1（最小预览页）：/app 同源服务 static/index.html ——
     # 避免 file:// 打开时的跨域拦截；仅挂载静态文件，业务路由零改动
     _static_dir = Path(__file__).resolve().parent / "static"
