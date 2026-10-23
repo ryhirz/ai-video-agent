@@ -34,6 +34,20 @@ from server.tasks import celery_app                # noqa: E402
 FF = resolve_ffmpeg()
 tmp = Path(tempfile.mkdtemp(prefix="minio_e2e_"))
 
+# ---- 0. 连通性快检：服务未启动时快速失败，避免整屏连接堆栈 ----
+try:
+    Minio(ENDPOINT, access_key="minioadmin", secret_key="minioadmin",
+          secure=False).list_buckets()
+except Exception as exc:  # noqa: BLE001 —— 快速失败路径，打印根因即可
+    print(f"[0] MinIO 未运行或不可达（{ENDPOINT}）："
+          f"{exc.__class__.__name__}: {exc}")
+    print("    请先启动服务：MINIO_ROOT_USER=minioadmin "
+          "MINIO_ROOT_PASSWORD=minioadmin tools/minio/minio.exe server "
+          "tools/minio/data --address 127.0.0.1:9000 "
+          "--console-address 127.0.0.1:9001")
+    sys.exit(1)
+print(f"[0] MinIO 连通正常: {ENDPOINT}")
+
 # ---- 1. 生成 1s 真实源素材（视频 + 音频） ----
 src = tmp / "src.mp4"
 subprocess.run(

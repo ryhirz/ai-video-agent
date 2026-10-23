@@ -56,6 +56,20 @@ class _FakeMinio:
         Path(file_path).write_bytes(_FakeMinio.objects.store[key])
         return object()
 
+    def __getattr__(self, name: str):
+        """未实现的客户端方法兜底：返回记录型 dummy 而非 AttributeError。
+
+        仅覆盖测试实际用到的 4 个显式方法之外的扩展调用，提高测试
+        扩展韧性；dunder 探测（copy/pickle 等）仍按原样抛 AttributeError。
+        """
+        if name.startswith("__"):
+            raise AttributeError(name)
+
+        def _dummy(*_args, **_kwargs) -> object:
+            return object()
+
+        return _dummy
+
 
 class TestMinIOStorageUnit(unittest.TestCase):
     """桩客户端：上传 / 下载缓存 / 自动建桶。"""
