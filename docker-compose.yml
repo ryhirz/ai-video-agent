@@ -1,0 +1,99 @@
+# ============================================================
+# AI 视频剪辑智能体 —— 容器编排（redis + minio + app + worker）
+#
+# 用法：
+#   cp .env.example .env         # 按需修改（生产必改凭据）
+#   docker compose up -d         # 启动全部 4 服务
+#   curl http://localhost:8000/health
+#   docker compose logs -f app worker
+#   docker compose down          # 停止（保留数据卷）
+#   docker compose down -v       # 停止并清空全部数据卷
+#
+# MinIO 可选：.env 里 MINIO_ENDPOINT 留空 → app/worker 走本地 FS
+# （app_outputs 卷），minio 容器可 docker compose stop minio 停掉；
+# 设为 minio:9000 → 全链路走对象存储。
+#
+# Worker 池语义（重要）：容器是 Linux，使用 Celery 默认 prefork ——
+# 唯此 time_limit=600 硬杀兜底才生效（ADR 超时衔接设计）；
+# 不要改成 --pool=solo（solo 下硬杀超时失效，与单机 Windows 限制同因）。
+# ============================================================
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]   # AOF 持久化：任务消息不随重启丢失
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z    # 与 tools/minio 本地冒烟版同源
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    ports:
+      - "9000:9000"    # 宿主机调试用；纯容器间通信可删
+      - "9001:9001"    # WebUI 控制台
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment: &app_env
+      CELERY_BROKER_URL: redis://redis:6379/0
+      # 数据目录三件套：与 server/tasks.py::get_runtime 的环境变量接法对齐
+      RENDER_DB_PATH: /app/server_data/tasks.db
+      RENDER_STORAGE_ROOT: /app/server_data/renders
+      RENDER_TMP_ROOT: /app/server_data/tmp
+      # 空 = LocalStorage（app_outputs 卷）；minio:9000 = 对象存储（零代码切换）
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-renders}
+      MINIO_SECURE: ${MINIO_SECURE:-0}
+      # 生产必设（/render* 四路由启用 X-API-Key/?api_key= 认证）
+      API_KEY: ${API_KEY:-}
+    volumes:
+      - app_data:/app/server_data
+      - app_outputs:/app/server_data/renders
+      - app_tmp:/app/server_data/tmp
+    depends_on:
+      redis:
+        condition: service_healthy
+      # 故意不 depends_on minio：MinIO 是可选依赖（端点留空时不该拉起/阻塞）
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: ["celery", "-A", "server.tasks", "worker", "--loglevel=info", "--concurrency=1"]
+    environment: *app_env          # 与 app 完全同环境：同 DB/同存储/同 broker
+    volumes:
+      - app_data:/app/server_data
+      - app_outputs:/app/server_data/renders
+      - app_tmp:/app/server_data/tmp
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    # 扩 worker 副本：docker compose up -d --scale worker=2
+    # （SQLite 写并发有限，扩副本前建议先切 MinIO + Postgres）
+
+volumes:
+  redis_data:      # Redis AOF
+  minio_data:      # 对象存储数据
+  app_data:        # SQLite（tasks.db）
+  app_outputs:     # 成片产物（LocalStorage 模式）或 MinIO 下载缓存
+  app_tmp:         # 渲染临时目录

@@ -43,3 +43,6 @@ tools/minio/
 
 # server 运行时数据（DB/素材/渲染产物——冒烟与端到端验证的本地产物）
 server/server_data/
+
+# 本机环境变量（compose 凭据——不入库不进镜像）
+.env

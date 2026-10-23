@@ -1,0 +1,32 @@
+# ============================================================
+# 构建上下文瘦身：镜像只需要 server/ + ai_video_agent/ + requirements.txt
+# ============================================================
+
+# 版本库与本地环境
+.git
+.gitignore
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 平台二进制：tools/ 下全是 Windows 版 ffmpeg/redis/minio，
+# 容器内 ffmpeg 由 apt 提供（resolve_ffmpeg 回退 PATH）
+tools/
+
+# AI 模型权重（容器镜像不带，2~3GB）
+weights/
+*.pt
+
+# 测试与文档（运行时不需要）
+tests/
+_verify/
+docs/
+*.docx
+*.zip
+*.md
+
+# 运行时数据与本机配置
+server/server_data/
+.env
+node_modules/
