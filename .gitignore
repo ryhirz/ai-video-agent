@@ -33,3 +33,7 @@ weights/
 
 # 本地临时日志
 _verify/_qwen_server.log
+
+# Redis 便携版（运行时下载/解压，非源码）
+tools/redis/
+_verify/_out_*.log

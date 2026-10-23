@@ -28,6 +28,14 @@ gradio>=4.0,<7          # 环境实测 6.27.0
 numpy>=1.24,<3          # 环境实测 2.5.3
 opencv-python>=4.7,<6   # 环境实测 5.0.0.93
 
+# ---------- 全栈层（server/，第二步显式化） ----------
+# ⚠️ fastapi/uvicorn 此前靠 gradio 传递依赖（搭便车）：server/ 直接 import
+#    却未声明，gradio 换 Web 框架时 CI 全新安装会静默崩 —— 必须显式声明。
+celery[redis]>=5.3,<7   # 异步任务队列 + Redis broker；环境实测 5.6.3
+fastapi>=0.100,<1       # API 层；环境实测 0.141.1（原为 gradio 传递依赖）
+uvicorn>=0.23,<1        # ASGI 服务器；环境实测 0.53.0（原为 gradio 传递依赖）
+sqlalchemy>=2.0,<3      # render_tasks DAL；环境实测 2.1.6
+
 
 # ---------- 测试工具 ----------
 # 并入锁文件的原因：CI 用 `pip install --require-hashes -r <lock>` 安装，

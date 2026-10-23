@@ -1,8 +1,9 @@
-"""FastAPI 路由层（全栈层架构 · 四的第一步）。
+"""FastAPI 路由层（全栈层第二步：Celery + Redis + DB 查询态取消）。
 
-POST   /render                  提交渲染任务（202）
+POST   /render                  提交渲染任务（202）→ render_video.delay
 GET    /render/{id}             查询状态/进度
-POST   /render/{id}/cancel      软取消（PENDING/RUNNING 有效）
+POST   /render/{id}/cancel      软取消（DB 查询态：只置 state=CANCELLED，
+                                worker 三个检查点查 DB 生效，终态幂等）
 GET    /render/{id}/download    下载成片（仅 SUCCESS）
 GET    /manifest                能力清单（前端动态渲染参数表单）
 
@@ -21,10 +22,10 @@ from pydantic import BaseModel, Field
 
 from ai_video_agent.registry import capability_manifest
 
-from .executor import RenderExecutor, new_task_id
-from .models import TaskDB, utcnow
+from .models import TaskDB, new_task_id, utcnow
 from .state import TaskState
 from .storage import LocalStorage
+from .tasks import configure_runtime, render_video
 
 _DEFAULT_ROOT = Path(__file__).resolve().parent / "server_data"
 
@@ -47,14 +48,14 @@ def create_app(db_path: str | Path | None = None,
 
     db = TaskDB(str(db_path))
     storage = LocalStorage(storage_root)
-    executor = RenderExecutor(db, storage, tmp_root)
+    # eager / API 进程内：任务体直接使用本 app 的资源实例（ADR-1）
+    configure_runtime(db, storage, tmp_root)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         yield
-        executor.shutdown()
 
-    app = FastAPI(title="ai-video-agent render API", version="0.1.0",
+    app = FastAPI(title="ai-video-agent render API", version="0.2.0",
                   lifespan=lifespan)
     app.state.db = db
 
@@ -63,7 +64,7 @@ def create_app(db_path: str | Path | None = None,
         task_id = new_task_id()
         db.create(task_id, req.user_id, req.timeline, req.options,
                   req.webhook_url)
-        executor.submit(task_id, req.timeline)
+        render_video.delay(task_id, req.timeline)   # eager 模式下同步执行
         return {"task_id": task_id, "state": TaskState.PENDING.value}
 
     @app.get("/render/{task_id}")
@@ -81,8 +82,9 @@ def create_app(db_path: str | Path | None = None,
         if task is None:
             raise HTTPException(404, "Task not found")
         if task["state"] in (TaskState.PENDING.value, TaskState.RUNNING.value):
-            executor.request_cancel(task_id)      # 标志位：worker 检查点生效
+            # DB 查询态（ADR-2）：不接触 worker，标志就是 state 本身
             db.update(task_id, state=TaskState.CANCELLED, finished_at=utcnow())
+        # 终态幂等：直接返回当前状态，不改库
         return {"task_id": task_id, "state": db.get(task_id)["state"]}
 
     @app.get("/render/{task_id}/download")
