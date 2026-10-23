@@ -17,6 +17,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -325,6 +326,38 @@ class TestHealthApi(unittest.TestCase):
         self.assertEqual(
             self.client.post("/render", json={"timeline": {}}).status_code,
             401)
+
+
+class TestRequestIdApi(unittest.TestCase):
+    """X-Request-ID 贯穿：透传 / 自动生成 + 响应头回写（结构化日志闭环）。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        celery_app.conf.task_always_eager = True
+        cls.tmp = Path(tempfile.mkdtemp(prefix="reqid_"))
+        from server.app import create_app
+        cls.client = TestClient(create_app(
+            db_path=cls.tmp / "tasks.db",
+            storage_root=cls.tmp / "renders",
+            tmp_root=cls.tmp / "tmp"))
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.client.close()
+        import shutil
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_header_passthrough(self) -> None:
+        """客户端/网关自带 X-Request-ID → 原样回写响应头（链路追踪）。"""
+        r = self.client.get("/health", headers={"X-Request-ID": "test-123"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.headers["X-Request-ID"], "test-123")
+
+    def test_auto_generated_uuid(self) -> None:
+        """不带 ID → 自动生成 UUID v4 并回写响应头。"""
+        r = self.client.get("/health")
+        parsed = uuid.UUID(r.headers["X-Request-ID"])   # 非 UUID 会抛 ValueError
+        self.assertEqual(parsed.version, 4)
 
 
 if __name__ == "__main__":

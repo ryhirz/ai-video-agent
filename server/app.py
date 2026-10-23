@@ -20,15 +20,18 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, Optional
+import time
+import uuid
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from structlog.contextvars import bind_contextvars, clear_contextvars
 
 from ai_video_agent.registry import capability_manifest
 
-from .logging import configure_structlog
+from .logging import configure_structlog, get_logger
 from .models import TaskDB, new_task_id, utcnow
 from .state import TaskState
 from .storage import storage_from_env
@@ -70,6 +73,28 @@ def create_app(db_path: str | Path | None = None,
     app = FastAPI(title="ai-video-agent render API", version="0.2.0",
                   lifespan=lifespan)
     app.state.db = db
+
+    # ---- request_id 贯穿（结构化日志闭环，第十九节）----
+    # 每请求生成/透传 X-Request-ID 并注入 structlog 上下文：
+    # 客户端/网关自带 X-Request-ID 则透传（跨服务链路追踪），否则 UUID v4；
+    # 任何后续 structlog 打点自动携带 request_id，无需手动传。
+    _log = get_logger(__name__)
+
+    @app.middleware("http")
+    async def attach_request_id(request: Request, call_next):
+        clear_contextvars()   # 协程复用场景防上下文泄漏
+        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+        bind_contextvars(request_id=request_id)
+        _start = time.perf_counter()
+        response = await call_next(request)
+        # 访问日志：每请求一行（含 request_id），业务代码零打点也可观测
+        _log.info("http_request",
+                  method=request.method,
+                  path=request.url.path,
+                  status=response.status_code,
+                  duration_ms=round((time.perf_counter() - _start) * 1000, 1))
+        response.headers["X-Request-ID"] = request_id
+        return response
 
     # ---- 可选认证：API_KEY 环境变量在 create_app 时读取一次 ----
     # 未设置 → _expected_key 为 None，依赖直接放行（零开销、向后兼容）
