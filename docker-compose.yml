@@ -83,6 +83,8 @@ services:
     build: .
     command: ["celery", "-A", "server.tasks", "worker", "--loglevel=info", "--concurrency=1"]
     environment: *app_env          # 与 app 完全同环境：同 DB/同存储/同 broker
+    ports:
+      - "${WORKER_METRICS_PORT:-9101}:9101"   # worker 自有 /metrics（Prometheus 拉取是进程内的）
     volumes:
       - app_data:/app/server_data
       - app_outputs:/app/server_data/renders

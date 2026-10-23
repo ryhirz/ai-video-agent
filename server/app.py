@@ -32,7 +32,8 @@ from structlog.contextvars import bind_contextvars, clear_contextvars
 from ai_video_agent.registry import capability_manifest
 
 from .logging import configure_structlog, get_logger
-from .metrics import APP_INFO, collect_metrics_middleware, metrics_response
+from .metrics import (APP_INFO, collect_metrics_middleware, metrics_response,
+                      refresh_db_gauges)
 from .models import TaskDB, new_task_id, utcnow
 from .state import TaskState
 from .storage import storage_from_env
@@ -179,6 +180,7 @@ def create_app(db_path: str | Path | None = None,
     @app.get("/metrics", include_in_schema=False)
     def metrics() -> Response:
         """Prometheus 抓取端点（公开：抓取器无法携带 API Key，与 /health 同理）."""
+        refresh_db_gauges(app.state.db)   # DB 权威队列深度（scrape 时快照）
         body, content_type = metrics_response()
         return Response(content=body, media_type=content_type)
 

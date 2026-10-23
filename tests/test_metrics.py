@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,8 +18,12 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
+from ai_video_agent.render import resolve_ffmpeg
 from server.app import create_app
 from server.tasks import celery_app
+
+FF = resolve_ffmpeg()
+W, H = 320, 240
 
 
 def _make_app(tmp_prefix: str):
@@ -66,6 +71,69 @@ class TestMetricsApi(unittest.TestCase):
             # 对照组：业务路由被拦截
             self.assertEqual(
                 client.get("/render/nonexistent").status_code, 401)
+
+
+def _gen_source(path: Path, dur: float = 1.0) -> None:
+    """生成 1s 真实源素材（视频 + 音频），与 test_server_api 同法。"""
+    subprocess.run(
+        [FF, "-v", "error", "-y",
+         "-f", "lavfi", "-i", f"color=c=blue:s=320x240:d={dur}",
+         "-f", "lavfi", "-i", f"sine=f=440:d={dur}",
+         "-c:v", "libx264", "-pix_fmt", "yuv420p",
+         "-c:a", "aac", "-shortest", str(path)],
+        check=True, capture_output=True)
+
+
+def _timeline(src: str, dur: float = 1.0) -> dict:
+    return {
+        "schemaVersion": "1.0.0", "fps": 30,
+        "resolution": {"w": W, "h": H}, "duration": dur,
+        "tracks": [{"id": "v_main", "type": "video"},
+                   {"id": "a_main", "type": "audio"}],
+        "clips": [
+            {"id": "src_video", "track": "v_main", "sourceRef": src,
+             "in": 0.0, "out": dur, "sourceIn": 0.0, "sourceOut": dur},
+            {"id": "src_audio", "track": "a_main", "sourceRef": src,
+             "in": 0.0, "out": dur, "sourceIn": 0.0, "sourceOut": dur},
+        ],
+        "subtitles": [], "transitions": [], "texts": [],
+    }
+
+
+class TestWorkerMetrics(unittest.TestCase):
+    """worker 侧渲染指标：eager 真渲染 → 终态计数/耗时/队列深度快照。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        celery_app.conf.task_always_eager = True
+        cls.tmp = Path(tempfile.mkdtemp(prefix="wmetrics_"))
+        cls.src = cls.tmp / "src.mp4"
+        _gen_source(cls.src)
+        cls.client = TestClient(_make_app("wmetrics_"))
+
+    def test_render_outcome_and_duration_counted(self) -> None:
+        resp = self.client.post(
+            "/render", json={"user_id": "u-wm",
+                             "timeline": _timeline(str(self.src))})
+        self.assertEqual(resp.status_code, 202)
+        task_id = resp.json()["task_id"]
+        # eager：POST 返回即终态
+        state = self.client.get(f"/render/{task_id}").json()["state"]
+        self.assertEqual(state, "success")
+
+        body = self.client.get("/metrics").text
+        self.assertIn('render_tasks_total{outcome="success"}', body)
+        # 成功任务计入耗时直方图（count/sum 样本在位）
+        self.assertIn("render_duration_seconds_count", body)
+        self.assertIn("render_duration_seconds_sum", body)
+        # 活跃数已回落（任务结束后 dec）
+        self.assertIn("render_active 0.0", body)
+
+    def test_queue_depth_snapshot_from_db(self) -> None:
+        body = self.client.get("/metrics").text
+        # DB 权威队列深度 Gauge 在位（本 app 无 pending 任务 → 0）
+        self.assertIn("render_queue_depth 0.0", body)
+        self.assertIn("render_running_depth 0.0", body)
 
 
 if __name__ == "__main__":

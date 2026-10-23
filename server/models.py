@@ -16,7 +16,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from sqlalchemy import Float, Index, Text, create_engine, insert, select
+from sqlalchemy import Float, Index, Text, create_engine, func, insert, select
 from sqlalchemy.orm import (DeclarativeBase, Mapped, mapped_column,
                             sessionmaker)
 
@@ -97,6 +97,13 @@ class TaskDB:
             vals[k] = v
         with self._lock, self._session.begin() as session:
             session.query(RenderTask).filter_by(id=task_id).update(vals)
+
+    def counts_by_state(self) -> Dict[str, int]:
+        """按 state 分组计数（/metrics 队列深度 Gauge 的 DB 权威数据源）."""
+        stmt = select(RenderTask.state, func.count()).group_by(RenderTask.state)
+        with self._session.begin() as session:
+            rows = session.execute(stmt).all()
+        return {state: n for state, n in rows}
 
     @staticmethod
     def _to_dict(row: RenderTask) -> Dict[str, Any]:

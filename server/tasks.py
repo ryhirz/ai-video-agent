@@ -27,6 +27,8 @@ from ai_video_agent.render import render
 from ai_video_agent.timeline import Timeline
 
 from .logging import configure_structlog
+from .metrics import (RENDER_ACTIVE, RENDER_DURATION, RENDER_TOTAL,
+                      start_worker_metrics)
 from .models import TaskDB, utcnow
 from .state import TaskState
 from .storage import LocalStorage, Storage, storage_from_env
@@ -126,6 +128,31 @@ def _finish_terminal(db: TaskDB, rt: "WorkerRuntime", task_id: str, *,
 
 @celery_app.task(name="render_video", bind=True)
 def render_video(self, task_id: str, timeline_json: Dict[str, Any]) -> None:
+    """渲染任务薄壳：worker 侧指标埋点（Prometheus）。
+
+    - render_active：入口 inc / finally dec（异常路径也回落）
+    - render_tasks_total{outcome=...}：finally 从 DB 读终态计数
+      （DB 是权威状态源，一次覆盖全部 return 路径，不在散落的
+      分支里逐一打点）
+    - render_duration_seconds：成功任务才 observe 耗时
+    任务体本体在 _render_video_body，状态推进逻辑零改动。
+    """
+    rt = get_runtime()
+    start = _time.monotonic()
+    RENDER_ACTIVE.inc()
+    try:
+        _render_video_body(task_id, timeline_json)
+    finally:
+        RENDER_ACTIVE.dec()
+        row = rt.db.get(task_id)
+        state = row["state"] if row else None
+        if state:
+            RENDER_TOTAL.labels(outcome=state).inc()
+            if state == TaskState.SUCCESS.value:
+                RENDER_DURATION.observe(_time.monotonic() - start)
+
+
+def _render_video_body(task_id: str, timeline_json: Dict[str, Any]) -> None:
     """渲染任务体：executor._run 的状态推进原样迁移 + 超时衔接。
 
     状态推进：RUNNING → compile 预检 → render → storage.save → SUCCESS；
@@ -221,3 +248,16 @@ def render_video(self, task_id: str, timeline_json: Dict[str, Any]) -> None:
     url = rt.storage.save(path, key)
     _finish_terminal(db, rt, task_id, state=TaskState.SUCCESS,
                      result_url=url, progress=1.0)
+
+
+# ---- worker 进程指标端点（Prometheus 拉取模型是进程内的）----
+# 生产双进程部署时，worker 埋点（render_tasks/render_duration/render_active）
+# 须经自有端口暴露；eager/测试模式任务与 API 同进程，无需此信号。
+# prefork 多并发时仅首个子进程绑定成功（其余 OSError 静默跳过）——
+# 本项目 compose 固定 --concurrency=1，单子进程持有真实计数。
+from celery.signals import worker_process_init  # noqa: E402
+
+
+@worker_process_init.connect
+def _start_worker_metrics_server(**_kwargs) -> None:
+    start_worker_metrics()
