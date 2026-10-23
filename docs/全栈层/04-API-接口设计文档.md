@@ -3,7 +3,10 @@
 > 版本：v1.0 · 日期：2026-10-23
 > 上游依据：PRD v1.0 · 现有实现 `server/app.py`（5 路由 + /manifest，与代码逐条核对）
 > Base URL：`http://localhost:8000`（`uvicorn server.app:app` 默认）
-> 认证：本版无认证（user_id 默认 "local"，多租户不在范围）
+> 认证（可选，2026-10-23 落地）：环境变量 `API_KEY` **未设置 = 无认证**（历史行为）；
+> **设置后** `/render*` 四条业务路由要求 `X-API-Key` 请求头**或** `?api_key=` 查询参数
+> （等价放行，后者服务 video.src / `<a download>` 场景），不匹配 → 401。
+> `/manifest` 与 `/app` 静态页保持公开。user_id 默认 "local"（多租户不在范围）
 
 ---
 

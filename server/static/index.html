@@ -122,6 +122,8 @@ details .op span { color: var(--text-sub); }
   <textarea id="timeline" placeholder='粘贴 timeline JSON，或点击「填入示例」'></textarea>
   <label>webhook_url（可选：任务终态后服务端回调此地址）</label>
   <input type="text" id="webhookUrl" placeholder="例：http://127.0.0.1:9000/callback">
+  <label>API Key（后端设 API_KEY 环境变量时必填；留空 = 未启用认证。存 localStorage）</label>
+  <input type="password" id="apiKey" placeholder="X-API-Key">
   <div class="actions">
     <button class="btn" id="fillBtn">填入示例</button>
     <button class="btn primary" id="submitBtn">提交渲染</button>
@@ -200,6 +202,30 @@ function stopPolling() {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 }
 
+/* ================= 认证（可选 API Key，存 localStorage） ================= */
+function apiKey() { return localStorage.getItem("ava_api_key") || ""; }
+function apiHeaders(extra) {
+  var h = extra || {};
+  var k = apiKey();
+  if (k) h["X-API-Key"] = k;
+  return h;
+}
+function apiKeyQuery() {
+  var k = apiKey();
+  return k ? ("?api_key=" + encodeURIComponent(k)) : "";
+}
+/* 初始化 Key 输入框（跨刷新记忆） */
+(function () {
+  var inp = $("apiKey");
+  if (!inp) return;
+  inp.value = apiKey();
+  inp.onchange = function () {
+    if (inp.value.trim()) localStorage.setItem("ava_api_key", inp.value.trim());
+    else localStorage.removeItem("ava_api_key");
+  };
+})();
+var AUTH_HINT = "（后端已启用 API Key 认证：在「API Key」栏填入与 API_KEY 环境变量一致的值）";
+
 /* ================= 状态轮询（1s 间隔，终态停止） ================= */
 function startPolling(taskId) {
   stopPolling();
@@ -211,9 +237,11 @@ function startPolling(taskId) {
   showErr("stateErr", null);
 
   function tick() {
-    fetch(API + "/render/" + encodeURIComponent(taskId))
+    fetch(API + "/render/" + encodeURIComponent(taskId),
+          { headers: apiHeaders() })
       .then(function (r) {
-        if (!r.ok) throw new Error("查询失败 HTTP " + r.status);
+        if (!r.ok) throw new Error("查询失败 HTTP " + r.status +
+                                   (r.status === 401 ? AUTH_HINT : ""));
         return r.json();
       })
       .then(function (body) {
@@ -240,7 +268,8 @@ function startPolling(taskId) {
 
 /* ================= 结果区 ================= */
 function showResult(taskId) {
-  var url = API + "/render/" + encodeURIComponent(taskId) + "/download";
+  var url = API + "/render/" + encodeURIComponent(taskId) +
+            "/download" + apiKeyQuery();
   $("resultEmpty").style.display = "none";
   var v = $("video");
   v.src = url;
@@ -262,12 +291,13 @@ $("submitBtn").onclick = function () {
   var btn = this;
   fetch(API + "/render", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: apiHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(payload)
   })
     .then(function (r) {
       if (r.status !== 202) return r.json().then(function (j) {
-        throw new Error("HTTP " + r.status + " " + JSON.stringify(j));
+        throw new Error("HTTP " + r.status + " " + JSON.stringify(j) +
+                        (r.status === 401 ? AUTH_HINT : ""));
       });
       return r.json();
     })

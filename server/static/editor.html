@@ -58,6 +58,19 @@ input:focus, select:focus { border-color: var(--primary); }
 .clipbar.video { background: var(--primary); }
 .clipbar.audio { background: var(--green); }
 .clipbar.sel { outline: 2px solid var(--orange); outline-offset: -2px; }
+/* ---- 拖拽手柄：clipbar 左右各 8px 修剪区 ---- */
+.clipbar .ctxt { pointer-events: none; }   /* 文本不拦手柄的 hover/按下 */
+.clipbar .hL, .clipbar .hR { position: absolute; top: 0; bottom: 0;
+  width: 8px; cursor: ew-resize; }
+.clipbar .hL { left: 0; border-radius: 4px 0 0 4px;
+  background: linear-gradient(90deg, rgba(255,255,255,.35), transparent); }
+.clipbar .hR { right: 0; border-radius: 0 4px 4px 0;
+  background: linear-gradient(270deg, rgba(255,255,255,.35), transparent); }
+.clipbar .hL:hover, .clipbar .hR:hover { background: rgba(255,255,255,.55); }
+.track-row { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+.track-row .tbtn { border: none; background: transparent; color: var(--text-sub);
+  cursor: pointer; font-size: 14px; padding: 2px 5px; border-radius: 6px; }
+.track-row .tbtn:hover { background: var(--border); color: var(--text); }
 /* ---- 属性面板 ---- */
 .fx { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .fx label.fxitem { display: flex; align-items: center; gap: 4px; margin: 0;
@@ -112,27 +125,24 @@ textarea.json { min-height: 140px; font-family: ui-monospace, Consolas, monospac
   <label>素材绝对路径（视频+音频同源；先填这里再添加片段）</label>
   <input type="text" id="srcPath" placeholder="例：E:\media\sample.mp4">
   <div class="row">
-    <button class="btn" id="addV">+ 视频片段</button>
-    <button class="btn" id="addA">+ 音频片段</button>
     <button class="btn danger" id="delClip">删除选中片段</button>
     <button class="btn" id="addText">+ 画面文字</button>
+    <span class="meta" style="align-self:center">添加片段：点各轨道右侧的「+」按钮</span>
   </div>
 </section>
 
-<!-- ② 轨道视图 -->
+<!-- ② 轨道视图（多轨） -->
 <section class="card">
   <h2><span class="no">2</span>轨道视图 <span class="meta" style="margin:0" id="durText"></span></h2>
-  <div class="track-wrap">
-    <div class="track-label">视频轨 v_main</div>
-    <div class="track" id="trackV"></div>
-  </div>
-  <div class="track-wrap">
-    <div class="track-label">音频轨 a_main</div>
-    <div class="track" id="trackA"></div>
+  <div id="trackList"></div>
+  <div class="row" style="margin-top:10px">
+    <button class="btn" id="addVTrack">+ 视频轨</button>
+    <button class="btn" id="addATrack">+ 音频轨</button>
+    <span class="meta" style="align-self:center">多轨语义：视频轨按入点顺序合并为单流（非画中画）；音频轨按入点拼接</span>
   </div>
   <div class="row" style="margin-top:10px">
     <div style="flex:1">
-      <label>转场：加在第 N 个片段与 N+1 之间</label>
+      <label>转场：同一视频轨内相邻两片段之间</label>
       <select id="trPos"></select>
     </div>
     <div style="width:120px">
@@ -163,6 +173,8 @@ textarea.json { min-height: 140px; font-family: ui-monospace, Consolas, monospac
   <h2><span class="no">5</span>预检与提交</h2>
   <label>webhook_url（可选：任务终态后服务端回调）</label>
   <input type="text" id="webhookUrl" placeholder="http://…/callback">
+  <label>API Key（后端设 API_KEY 环境变量时必填；留空 = 未启用认证。存 localStorage）</label>
+  <input type="password" id="apiKey" placeholder="X-API-Key">
   <div class="row">
     <button class="btn" id="previewBtn">生成 JSON 预览 + 预检</button>
     <button class="btn primary" id="submitBtn">预检并提交渲染</button>
@@ -194,10 +206,49 @@ textarea.json { min-height: 140px; font-family: ui-monospace, Consolas, monospac
 <script>
 "use strict";
 /* ================= 状态（单一真相） ================= */
-var state = { clips: [], transitions: [], texts: [], sel: null, textSel: -1 };
+var state = { tracks: [
+                 { id: "v_main", type: "video" },
+                 { id: "a_main", type: "audio" }],
+               clips: [], transitions: [], texts: [],
+               sel: null, textSel: -1 };
 var manifest = null;
 var pollTimer = null;
 var $ = function (id) { return document.getElementById(id); };
+
+/* ================= 认证（可选 API Key，存 localStorage） ================= */
+function apiKey() { return localStorage.getItem("ava_api_key") || ""; }
+function apiHeaders(extra) {
+  var h = extra || {};
+  var k = apiKey();
+  if (k) h["X-API-Key"] = k;
+  return h;
+}
+function apiKeyQuery() {
+  var k = apiKey();
+  return k ? ("?api_key=" + encodeURIComponent(k)) : "";
+}
+(function () {
+  var inp = $("apiKey");
+  if (!inp) return;
+  inp.value = apiKey();
+  inp.onchange = function () {
+    if (inp.value.trim()) localStorage.setItem("ava_api_key", inp.value.trim());
+    else localStorage.removeItem("ava_api_key");
+  };
+})();
+var AUTH_HINT = "（后端已启用 API Key 认证：在「API Key」栏填入与 API_KEY 环境变量一致的值）";
+function trackType(trackId) {
+  for (var i = 0; i < state.tracks.length; i++)
+    if (state.tracks[i].id === trackId) return state.tracks[i].type;
+  return null;
+}
+function nextTrackId(type) {
+  /* v_main 已占用 → v_2 / v_3 …；保证 track id 全局唯一 */
+  var pfx = type === "video" ? "v" : "a", n = 1;
+  while (state.tracks.some(function (t) { return t.id === pfx + "_" + n; }))
+    n++;
+  return pfx + "_" + n;
+}
 
 /* manifest 拉取失败时的内置兜底（与 registry 同步的最小集） */
 var FALLBACK = {
@@ -254,22 +305,31 @@ function rebuildTransitionTypes() {
     return "<option>" + t + "</option>"; }).join("");
 }
 
-/* ================= 片段增删 ================= */
+/* ================= 轨道 / 片段增删 ================= */
 function uid(p) { return p + "_" + Math.random().toString(36).slice(2, 8); }
 function srcRef() { return $("srcPath").value.trim() || "__替换素材路径__"; }
-function addClip(track) {
+function addClip(trackId) {
   var d = parseFloat($("srcDur").value) || 5;
-  var start = maxOut();
+  /* 新片段排在「本轨」最右，避免与既有片段重叠 */
+  var start = state.clips
+    .filter(function (c) { return c.track === trackId; })
+    .reduce(function (m, c) { return Math.max(m, c.out); }, 0);
   state.clips.push({
-    id: uid(track === "v_main" ? "v" : "a"), track: track,
+    id: uid(trackId.charAt(0)), track: trackId,
     sourceRef: srcRef(), "in": start, out: start + d,
     sourceIn: 0, sourceOut: d,
     transform: { x: 0, y: 0, scale: 1.0, rotation: 0, opacity: 1.0, crop: null },
     effects: [] });
   renderAll();
 }
-$("addV").onclick = function () { addClip("v_main"); };
-$("addA").onclick = function () { addClip("a_main"); };
+$("addVTrack").onclick = function () {
+  state.tracks.push({ id: nextTrackId("video"), type: "video" });
+  renderAll();
+};
+$("addATrack").onclick = function () {
+  state.tracks.push({ id: nextTrackId("audio"), type: "audio" });
+  renderAll();
+};
 $("delClip").onclick = function () {
   if (!state.sel) return;
   state.clips = state.clips.filter(function (c) { return c.id !== state.sel; });
@@ -285,41 +345,155 @@ function findClip(id) {
   return state.clips.filter(function (c) { return c.id === id; })[0] || null;
 }
 
-/* ================= 轨道渲染（时间条按比例布局） ================= */
+/* ================= 轨道渲染（动态多轨 + 拖拽修剪） ================= */
+function timeFromEvent(ev, trackEl, total) {
+  /* 客户端 x → 时间轴秒数（按轨道元素宽度比例换算） */
+  var r = trackEl.getBoundingClientRect();
+  var ratio = Math.min(Math.max((ev.clientX - r.left) / r.width, 0), 1);
+  return ratio * total;
+}
+function speedRateOf(c) {
+  var s = (c.effects || []).filter(function (e) {
+    return e.effectType === "speed"; })[0];
+  return (s && s.params && s.params.rate > 0) ? s.params.rate : 1.0;
+}
+/* 拖拽修剪的纯逻辑（node 验收脚本直接调用）：
+   edge="L" 修入点，"R" 修出点；dt 为时间轴变化量（秒）。
+   返回 null = 拒绝（越界），否则返回 {in,out,sourceIn,sourceOut}。
+   时间轴时长变化 dt 对应素材变化 dt*rate（speed 语义）。 */
+function applyDrag(c, edge, dt) {
+  var rate = speedRateOf(c);
+  var d = edge === "L" ? c["in"] + dt : c.out + dt;
+  var o;
+  if (edge === "L") {
+    if (!(d >= 0) || !(d < c.out - 0.1) || !(c.sourceIn + dt * rate >= 0))
+      return null;
+    o = { "in": d, out: c.out,
+          sourceIn: c.sourceIn + dt * rate, sourceOut: c.sourceOut };
+  } else {
+    if (!(d > c["in"] + 0.1) || !(c.sourceOut + dt * rate >= c.sourceIn))
+      return null;
+    o = { "in": c["in"], out: d,
+          sourceIn: c.sourceIn, sourceOut: c.sourceOut + dt * rate };
+  }
+  return o;
+}
 function renderTracks() {
   var total = Math.max(maxOut(), 1);
   $("durText").textContent = "总时长 " + maxOut().toFixed(2) + "s";
-  ["v_main", "a_main"].forEach(function (tr) {
-    var el = tr === "v_main" ? $("trackV") : $("trackA");
-    el.innerHTML = "";
-    state.clips.filter(function (c) { return c.track === tr; })
+  var list = $("trackList");
+  list.innerHTML = "";
+  state.tracks.forEach(function (tr) {
+    var row = document.createElement("div");
+    row.className = "track-row";
+    var label = document.createElement("div");
+    label.className = "track-label";
+    label.style.width = "130px";
+    label.innerHTML = (tr.type === "video" ? "视频轨 " : "音频轨 ") + tr.id;
+    var del = document.createElement("button");
+    del.className = "tbtn"; del.title = "删除该轨道（需为空轨）";
+    del.textContent = "✕";
+    del.onclick = function () {
+      var used = state.clips.some(function (c) { return c.track === tr.id; });
+      if (used) { alert("轨道 " + tr.id + " 上仍有片段，请先删除或清空"); return; }
+      state.tracks = state.tracks.filter(function (t) { return t.id !== tr.id; });
+      renderAll();
+    };
+    var add = document.createElement("button");
+    add.className = "tbtn"; add.title = "向该轨道添加片段";
+    add.textContent = "+";
+    add.onclick = function () { addClip(tr.id); };
+    var wrap = document.createElement("div");
+    wrap.className = "track-wrap"; wrap.style.flex = "1"; wrap.style.marginTop = "0";
+    var el = document.createElement("div");
+    el.className = "track";
+    state.clips.filter(function (c) { return c.track === tr.id; })
       .forEach(function (c) {
         var d = document.createElement("div");
-        d.className = "clipbar " + (tr === "v_main" ? "video" : "audio") +
+        d.className = "clipbar " + (tr.type === "video" ? "video" : "audio") +
                       (c.id === state.sel ? " sel" : "");
         d.style.left = (c["in"] / total * 100) + "%";
         d.style.width = Math.max((c.out - c["in"]) / total * 100, 3) + "%";
-        d.textContent = c.id + " " + c["in"].toFixed(1) + "→" + c.out.toFixed(1);
-        d.onclick = function () { state.sel = c.id; renderAll(); };
+        d.appendChild(Object.assign(document.createElement("span"),
+          { className: "ctxt", textContent:
+              c.id + " " + c["in"].toFixed(1) + "→" + c.out.toFixed(1) }));
+        d.appendChild(Object.assign(document.createElement("span"),
+          { className: "hL" }));
+        d.appendChild(Object.assign(document.createElement("span"),
+          { className: "hR" }));
+        d.onclick = function (ev) {
+          if (ev.target.className === "hL" || ev.target.className === "hR")
+            return;                       // 手柄点击交给拖拽逻辑
+          state.sel = c.id; renderAll();
+        };
+        attachDrag(d, el, total, c);
         el.appendChild(d);
       });
+    wrap.appendChild(el);
+    row.appendChild(label);
+    row.appendChild(wrap);
+    row.appendChild(add);
+    row.appendChild(del);
+    list.appendChild(row);
   });
-  /* 转场位置下拉：按 v_main 轨相邻对 */
-  var vs = state.clips.filter(function (c) { return c.track === "v_main"; });
+  /* 转场位置下拉：各视频轨内相邻对（optgroup 按轨分组） */
   var opts = "";
-  for (var i = 0; i + 1 < vs.length; i++)
-    opts += "<option value=\"" + i + "\">" + vs[i].id + " ↔ " +
-            vs[i + 1].id + "</option>";
-  $("trPos").innerHTML = opts || "<option value=\"\">（需 ≥2 个视频片段）</option>";
+  state.tracks.filter(function (t) { return t.type === "video"; })
+    .forEach(function (tr) {
+      var vs = state.clips.filter(function (c) { return c.track === tr.id; });
+      for (var i = 0; i + 1 < vs.length; i++)
+        opts += "<optgroup label=\"" + tr.id + "\"><option value=\"" +
+                tr.id + "|" + i + "\">" + vs[i].id + " ↔ " +
+                vs[i + 1].id + "</option></optgroup>";
+    });
+  $("trPos").innerHTML = opts || "<option value=\"\">（需同一视频轨内 ≥2 个片段）</option>";
   $("trList").textContent = state.transitions.length ?
     "已有转场：" + state.transitions.map(function (t) {
       return t.type + "(" + t.attachedClips.join("↔") + " " +
              t.duration + "s)"; }).join("；") : "";
 }
+function attachDrag(bar, trackEl, total, c) {
+  /* 指针拖拽修剪：hL/hR 按下手 → move 实时改 state → up 落定刷新 */
+  ["hL", "hR"].forEach(function (edge) {
+    var h = bar.querySelector("." + edge);
+    h.addEventListener("pointerdown", function (ev) {
+      ev.preventDefault(); ev.stopPropagation();
+      var startX = ev.clientX;
+      var o0 = { "in": c["in"], out: c.out,
+                 sourceIn: c.sourceIn, sourceOut: c.sourceOut };
+      function px2sec(x) {
+        var r = trackEl.getBoundingClientRect();
+        return (x - r.left) / r.width * total;
+      }
+      function onMove(e2) {
+        var dt = px2sec(e2.clientX) - px2sec(startX);
+        var nxt = applyDrag(c, edge === "hL" ? "L" : "R", dt);
+        if (!nxt) return;                       // 越界：保持上次合法值
+        Object.assign(c, nxt);
+        bar.style.left = (c["in"] / total * 100) + "%";
+        bar.style.width =
+          Math.max((c.out - c["in"]) / total * 100, 3) + "%";
+        var t = bar.querySelector(".ctxt");
+        if (t) t.textContent = c.id + " " + c["in"].toFixed(1) + "→" +
+                                c.out.toFixed(1);
+      }
+      function onUp(e2) {
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+        if (e2.clientX !== startX || c["in"] !== o0["in"] ||
+            c.out !== o0.out) renderAll();
+      }
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onUp);
+    });
+  });
+}
 $("addTr").onclick = function () {
-  var i = parseInt($("trPos").value, 10);
-  var vs = state.clips.filter(function (c) { return c.track === "v_main"; });
-  if (isNaN(i) || i + 1 >= vs.length) return;
+  var val = ($("trPos").value || "").split("|");
+  if (val.length !== 2) return;
+  var trId = val[0], i = parseInt(val[1], 10);
+  var vs = state.clips.filter(function (c) { return c.track === trId; });
+  if (i + 1 >= vs.length) return;
   var a = vs[i], b = vs[i + 1];
   var overlap = Math.min(a.out, b.out) - Math.max(a["in"], b["in"]);
   var dur = Math.min(parseFloat($("trDur").value) || 0.3,
@@ -335,7 +509,7 @@ function renderPanel() {
   $("selInfo").textContent = c ? ("选中 " + c.id + " · " + c.track) : "";
   if (!c) { $("panel").innerHTML =
     "<p class=\"meta\">在轨道上点击片段后在此编辑。</p>"; return; }
-  var isV = c.track === "v_main";
+  var isV = trackType(c.track) === "video";
   var html =
     "<div class=\"grid\">" +
     numField("in", "时间轴入点 in", c["in"]) +
@@ -498,6 +672,8 @@ function validate() {
   if (!state.clips.length) errs.push("· 至少需要一个片段");
   state.clips.forEach(function (c) {
     var tag = "片段 " + c.id;
+    if (trackType(c.track) === null)
+      errs.push("· " + tag + "：所属轨道 " + c.track + " 不存在");
     if (!c.sourceRef || c.sourceRef.indexOf("__替换") === 0)
       errs.push("· " + tag + "：素材路径未填写");
     if (!(c["in"] >= 0) || !(c.out > c["in"]))
@@ -505,7 +681,9 @@ function validate() {
                 c["in"] + " → " + c.out + "）");
     if (c.sourceOut < c.sourceIn)
       errs.push("· " + tag + "：sourceOut 必须 ≥ sourceIn");
-    if (c.track === "v_main") {
+    if (c.sourceIn < 0)
+      errs.push("· " + tag + "：sourceIn 不可为负");
+    if (trackType(c.track) === "video") {
       var t = c.transform || {};
       /* manifest transform.x/y 明确 min:0 —— 负偏移在此拦截 */
       if (t.x < 0) errs.push("· " + tag + "：transform.x 不可为负（等尺寸画布内偏移）");
@@ -555,7 +733,9 @@ function buildTimeline() {
     resolution: { w: parseInt($("resW").value, 10) || 640,
                   h: parseInt($("resH").value, 10) || 360 },
     duration: maxOut(),
-    tracks: [{ id: "v_main", type: "video" }, { id: "a_main", type: "audio" }],
+    tracks: state.tracks.map(function (t) {
+      return { id: t.id, type: t.type };
+    }),
     clips: state.clips.map(function (c) {
       var o = { id: c.id, track: c.track, sourceRef: c.sourceRef,
                 "in": c["in"], out: c.out,
@@ -591,11 +771,13 @@ $("submitBtn").onclick = function () {
   $("submitBtn").disabled = true;
   var btn = this;
   fetch("/render", { method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: apiHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(payload) })
     .then(function (r) {
       if (r.status !== 202) return r.json().then(function (j) {
-        throw new Error("HTTP " + r.status + " " + JSON.stringify(j)); });
+        throw new Error("HTTP " + r.status + " " + JSON.stringify(j) +
+                        (r.status === 401 ? AUTH_HINT : ""));
+      });
       return r.json();
     })
     .then(function (body) { startPolling(body.task_id); })
@@ -630,9 +812,11 @@ function startPolling(taskId) {
   $("resultActions").style.display = "none";
   $("stateErr").style.display = "none";
   function tick() {
-    fetch("/render/" + encodeURIComponent(taskId))
+    fetch("/render/" + encodeURIComponent(taskId),
+          { headers: apiHeaders() })
       .then(function (r) {
-        if (!r.ok) throw new Error("查询失败 HTTP " + r.status);
+        if (!r.ok) throw new Error("查询失败 HTTP " + r.status +
+                                   (r.status === 401 ? AUTH_HINT : ""));
         return r.json();
       })
       .then(function (body) {
@@ -646,7 +830,8 @@ function startPolling(taskId) {
         if (TERMINAL[body.state]) {
           clearInterval(pollTimer); pollTimer = null;
           if (body.state === "success") {
-            var url = "/render/" + encodeURIComponent(taskId) + "/download";
+            var url = "/render/" + encodeURIComponent(taskId) +
+                      "/download" + apiKeyQuery();
             $("resultEmpty").style.display = "none";
             var v = $("video");
             v.src = url; v.style.display = "block";

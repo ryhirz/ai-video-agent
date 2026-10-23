@@ -33,14 +33,21 @@ globalThis.document = {
 };
 const inputs = {};                        // 模拟用户输入框的值
 globalThis.fetch = () => new Promise(() => {});   // manifest 拉取挂起 → 走兜底
+/* 浏览器 API 桩：编辑器顶层初始化会读 localStorage（API Key 记忆） */
+globalThis.localStorage = {
+  _s: {}, getItem(k) { return this._s[k] ?? null; },
+  setItem(k, v) { this._s[k] = String(v); },
+  removeItem(k) { delete this._s[k]; },
+};
+globalThis.alert = () => {};
 
 const window = globalThis;
 /* ESM 严格模式下 eval 不泄漏 var —— 用 new Function 包裹并显式引出 API */
 const api = new Function(
   "document", "fetch", "window",
-  js + "\n;return { state, validate, buildTimeline, renderAll };")(
+  js + "\n;return { state, validate, buildTimeline, renderAll, applyDrag };")(
   globalThis.document, globalThis.fetch, window);
-const { state, validate, buildTimeline } = api;
+const { state, validate, buildTimeline, applyDrag } = api;
 
 /* 注入 manifest 兜底开关：强制走 FALLBACK（fetch 已挂起） */
 // 直接操纵 state（模拟用户在面板上的编辑结果）
@@ -96,3 +103,59 @@ const final = buildTimeline();
 writeFileSync(join(root, "server/server_data/_editor_combo.json"),
               JSON.stringify(final, null, 1));
 console.log("组合 timeline 已写盘：server/server_data/_editor_combo.json");
+
+/* ---- 拖拽修剪纯逻辑 applyDrag ---- */
+const dragClip = { id: "d1", track: "v_main", sourceRef: "E:/m.mp4",
+  "in": 2, out: 5, sourceIn: 1, sourceOut: 4, effects: [] };
+// 左缘 +0.5s：入点与素材入点同步后移（原速 rate=1）
+let o = applyDrag(dragClip, "L", 0.5);
+if (!o || o["in"] !== 2.5 || o.sourceIn !== 1.5 || o.out !== 5
+    || o.sourceOut !== 4) {
+  console.error("applyDrag L 正常修剪不符:", o); process.exit(1);
+}
+// 左缘越界：dt=-3 → in=-1 拒绝；素材耗尽（sourceIn<0）拒绝
+if (applyDrag(dragClip, "L", -3) !== null
+    || applyDrag(dragClip, "L", -1.5) !== null) {
+  console.error("applyDrag L 越界未拒绝"); process.exit(1);
+}
+// 右缘 -1s：out/sourceOut 同步收缩
+o = applyDrag(dragClip, "R", -1);
+if (!o || o.out !== 4 || o.sourceOut !== 3 || o["in"] !== 2) {
+  console.error("applyDrag R 收缩不符:", o); process.exit(1);
+}
+// speed=2 时素材变化 = 时间轴变化 × rate
+const fast = { ...dragClip, effects: [{ effectType: "speed",
+                                       params: { rate: 2 } }] };
+o = applyDrag(fast, "R", 0.5);
+if (!o || o.out !== 5.5 || o.sourceOut !== 5) {   // 4 + 0.5*2
+  console.error("applyDrag speed 换算不符:", o); process.exit(1);
+}
+console.log("PASS 拖拽：applyDrag 边界约束 + speed 换算正确");
+
+/* ---- 多轨：新增视频轨 + 片段归属 + 轨道不存在拦截 ---- */
+state.tracks.push({ id: "v_2", type: "video" });
+state.clips.push(
+  { id: "v2a", track: "v_2", sourceRef: "E:/media/sample.mp4",
+    "in": 4, out: 6, sourceIn: 0, sourceOut: 2,
+    transform: { x: 0, y: 0, scale: 1.0, rotation: 0, opacity: 1.0, crop: null },
+    effects: [] });
+errs = validate();
+if (errs.length) { console.error("多轨正例误报:", errs); process.exit(1); }
+const multi = buildTimeline();
+if (multi.tracks.length !== 3
+    || !multi.tracks.some(t => t.id === "v_2" && t.type === "video")
+    || !multi.clips.some(c => c.track === "v_2")) {
+  console.error("多轨 buildTimeline 不符:",
+                JSON.stringify(multi.tracks), JSON.stringify(multi.clips));
+  process.exit(1);
+}
+console.log("PASS 多轨：3 轨 timeline 组装正确（视频轨按入点顺序合并语义）");
+
+// 轨道不存在 → 前端拦截
+state.clips[0].track = "v_gone";
+errs = validate();
+if (!errs.some(e => e.includes("轨道 v_gone 不存在"))) {
+  console.error("孤儿轨道未被拦截:", errs); process.exit(1);
+}
+state.clips[0].track = "v_main";
+console.log("PASS 多轨：片段引用不存在轨道被拦截");

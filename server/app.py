@@ -7,16 +7,21 @@ POST   /render/{id}/cancel      软取消（DB 查询态：只置 state=CANCELLE
 GET    /render/{id}/download    下载成片（仅 SUCCESS）
 GET    /manifest                能力清单（前端动态渲染参数表单）
 
+认证（可选）：环境变量 API_KEY 设置后，/render* 四条业务路由要求请求头
+X-API-Key 匹配（401 拒绝）；未设置 = 完全关闭认证，行为与历史版本一致。
+/manifest 与 /app 静态页保持公开（表单渲染与页面加载不受影响）。
+
 create_app(db_path, storage_root, tmp_root) 工厂便于测试注入临时目录；
 模块级 `app = create_app()` 供 `uvicorn server.app:app` 直接启动。
 """
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -61,7 +66,25 @@ def create_app(db_path: str | Path | None = None,
                   lifespan=lifespan)
     app.state.db = db
 
-    @app.post("/render", status_code=202)
+    # ---- 可选认证：API_KEY 环境变量在 create_app 时读取一次 ----
+    # 未设置 → _expected_key 为 None，依赖直接放行（零开销、向后兼容）
+    _expected_key = os.environ.get("API_KEY") or None
+
+    def require_api_key(
+            x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+            api_key: Optional[str] = None) -> None:
+        """/render* 业务路由的认证依赖：Key 未配置时恒放行。
+
+        同时接受 X-API-Key 请求头与 api_key 查询参数 —— 后者服务于
+        浏览器无法携带自定义头的场景（video.src / <a download>）。
+        """
+        if _expected_key is not None and _expected_key not in (x_api_key,
+                                                               api_key):
+            raise HTTPException(401, "Invalid or missing API key")
+
+    _guard = [Depends(require_api_key)] if _expected_key is not None else []
+
+    @app.post("/render", status_code=202, dependencies=_guard)
     def create_render_task(req: RenderRequest) -> Dict[str, Any]:
         task_id = new_task_id()
         db.create(task_id, req.user_id, req.timeline, req.options,
@@ -69,7 +92,7 @@ def create_app(db_path: str | Path | None = None,
         render_video.delay(task_id, req.timeline)   # eager 模式下同步执行
         return {"task_id": task_id, "state": TaskState.PENDING.value}
 
-    @app.get("/render/{task_id}")
+    @app.get("/render/{task_id}", dependencies=_guard)
     def get_task_status(task_id: str) -> Dict[str, Any]:
         task = db.get(task_id)
         if task is None:
@@ -78,7 +101,7 @@ def create_app(db_path: str | Path | None = None,
                 "progress": task["progress"], "result_url": task["result_url"],
                 "error_msg": task["error_msg"]}
 
-    @app.post("/render/{task_id}/cancel")
+    @app.post("/render/{task_id}/cancel", dependencies=_guard)
     def cancel_task(task_id: str) -> Dict[str, Any]:
         task = db.get(task_id)
         if task is None:
@@ -89,7 +112,7 @@ def create_app(db_path: str | Path | None = None,
         # 终态幂等：直接返回当前状态，不改库
         return {"task_id": task_id, "state": db.get(task_id)["state"]}
 
-    @app.get("/render/{task_id}/download")
+    @app.get("/render/{task_id}/download", dependencies=_guard)
     def download_result(task_id: str) -> FileResponse:
         task = db.get(task_id)
         if task is None:

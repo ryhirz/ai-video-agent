@@ -12,6 +12,7 @@ eager 模式下 POST /render 同步完成渲染，无法构造「排队中即取
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import tempfile
 import time
@@ -209,6 +210,85 @@ def create_app_fixture():
     return create_app(db_path=TestServerApi.tmp / "tasks.db",
                       storage_root=TestServerApi.tmp / "renders",
                       tmp_root=TestServerApi.tmp / "tmp")
+
+
+class TestAuthApi(unittest.TestCase):
+    """可选认证（API_KEY 环境变量）：开 → 401/放行双态；关 → 行为不变。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        from unittest import mock
+        celery_app.conf.task_always_eager = True
+        cls.tmp = Path(tempfile.mkdtemp(prefix="auth_"))
+        cls.src = cls.tmp / "src.mp4"
+        _gen_source(cls.src)
+        from server.app import create_app
+
+        def make(key):
+            env = {"API_KEY": key} if key else {}
+            with mock.patch.dict(os.environ, env, clear=False):
+                # Key 在 create_app 内读取，上下文退出后配置已固化
+                return TestClient(create_app(
+                    db_path=cls.tmp / f"t_{key or 'off'}.db",
+                    storage_root=cls.tmp / f"r_{key or 'off'}",
+                    tmp_root=cls.tmp / f"tmp_{key or 'off'}"))
+
+        cls.client_off = make(None)       # 未启用认证
+        cls.client_on = make("sekrit")    # 启用认证
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.client_off.close()
+        cls.client_on.close()
+        import shutil
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_auth_disabled_by_default(self) -> None:
+        """未设 API_KEY：不带任何凭证 → 202（历史行为零变化）。"""
+        r = self.client_off.post("/render",
+                                 json={"timeline": _timeline(str(self.src))})
+        self.assertEqual(r.status_code, 202)
+
+    def test_auth_enforced_when_set(self) -> None:
+        """设 API_KEY：无头/错 Key → 401；对头放行；/manifest 保持公开。"""
+        tl = {"timeline": _timeline(str(self.src))}
+        self.assertEqual(
+            self.client_on.post("/render", json=tl).status_code, 401)
+        self.assertEqual(self.client_on.post(
+            "/render", json=tl,
+            headers={"X-API-Key": "wrong"}).status_code, 401)
+        ok = self.client_on.post("/render", json=tl,
+                                 headers={"X-API-Key": "sekrit"})
+        self.assertEqual(ok.status_code, 202)
+
+        # 查询参数等价放行（video.src / <a download> 无法携带自定义头）
+        tid = ok.json()["task_id"]
+        q = self.client_on.get(f"/render/{tid}?api_key=sekrit")
+        self.assertEqual(q.status_code, 200)
+        # 能力清单与静态页保持公开
+        self.assertEqual(self.client_on.get("/manifest").status_code, 200)
+        self.assertEqual(
+            self.client_on.get("/render/nope?api_key=sekrit").status_code, 404)
+
+    def test_download_with_query_key(self) -> None:
+        """下载链路：头放行提交，查询参数放行下载（?api_key=）。"""
+        ok = self.client_on.post("/render", json={"timeline": _timeline(str(self.src))},
+                                 headers={"X-API-Key": "sekrit"})
+        tid = ok.json()["task_id"]
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            body = self.client_on.get(
+                f"/render/{tid}?api_key=sekrit").json()
+            if body["state"] in TERMINAL:
+                break
+            time.sleep(0.2)
+        self.assertEqual(body["state"], "success", body)
+        dl = self.client_on.get(f"/render/{tid}/download?api_key=sekrit")
+        self.assertEqual(dl.status_code, 200)
+        self.assertGreater(len(dl.content), 0)
+        # 无凭证下载 → 401
+        self.assertEqual(
+            self.client_on.get(f"/render/{tid}/download").status_code, 401)
 
 
 if __name__ == "__main__":
