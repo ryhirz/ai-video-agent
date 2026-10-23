@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 视频剪辑智能体 · 时间轴编辑器</title>
+<style>
+/* ============ Apple 极简风 tokens（与 index.html 共享规范） ============ */
+:root {
+  --primary: #007AFF; --bg: #FFFFFF; --bg-sub: #F5F5F7;
+  --border: #E5E5EA; --text: #1D1D1F; --text-sub: #86868B;
+  --green: #34C759; --red: #FF3B30; --orange: #FF9500; --gray: #8E8E93;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: var(--bg); color: var(--text);
+  max-width: 860px; margin: 0 auto; padding: 28px 20px 64px;
+  font-size: 14px; line-height: 1.55;
+}
+header { display: flex; align-items: baseline; gap: 14px; }
+header h1 { font-size: 20px; font-weight: 600; }
+header a { font-size: 13px; color: var(--primary); text-decoration: none; }
+header p { width: 100%; color: var(--text-sub); font-size: 13px; margin-top: 2px; }
+.card { background: var(--bg); border: 1px solid var(--border);
+        border-radius: 12px; padding: 18px; margin-top: 14px; }
+.card h2 { font-size: 14px; font-weight: 600; margin-bottom: 10px;
+           display: flex; align-items: center; gap: 8px; }
+.card h2 .no { width: 20px; height: 20px; border-radius: 50%;
+               background: var(--primary); color: #fff; font-size: 12px;
+               display: inline-flex; align-items: center; justify-content: center; }
+label { display: block; font-size: 12px; color: var(--text-sub); margin: 8px 0 3px; }
+input[type=text], input[type=number], select, textarea {
+  width: 100%; border: 1px solid var(--border); border-radius: 8px;
+  padding: 7px 9px; font-size: 13px; font-family: inherit;
+  background: var(--bg); color: var(--text); outline: none;
+}
+input:focus, select:focus { border-color: var(--primary); }
+.grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.btn { border: none; border-radius: 8px; padding: 8px 14px; font-size: 13px;
+       font-weight: 500; cursor: pointer; background: var(--bg-sub);
+       color: var(--text); margin-top: 10px; }
+.btn.primary { background: var(--primary); color: #fff; }
+.btn.danger { background: #FFF2F1; color: var(--red); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+/* ---- 轨道视图 ---- */
+.track-wrap { border: 1px solid var(--border); border-radius: 8px;
+              padding: 8px; margin-top: 8px; background: var(--bg-sub); }
+.track-label { font-size: 11px; color: var(--text-sub); margin-bottom: 4px; }
+.track { position: relative; height: 34px; background: #E9E9EE;
+         border-radius: 6px; overflow: hidden; }
+.clipbar { position: absolute; top: 3px; bottom: 3px; border-radius: 4px;
+           font-size: 11px; color: #fff; display: flex; align-items: center;
+           justify-content: center; cursor: pointer; overflow: hidden;
+           white-space: nowrap; }
+.clipbar.video { background: var(--primary); }
+.clipbar.audio { background: var(--green); }
+.clipbar.sel { outline: 2px solid var(--orange); outline-offset: -2px; }
+/* ---- 属性面板 ---- */
+.fx { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.fx label.fxitem { display: flex; align-items: center; gap: 4px; margin: 0;
+                   font-size: 12px; color: var(--text);
+                   background: var(--bg-sub); border-radius: 6px;
+                   padding: 4px 8px; cursor: pointer; }
+.fx input[type=checkbox] { accent-color: var(--primary); }
+.fx input[type=number] { width: 64px; padding: 3px 5px; }
+.errbox { margin-top: 10px; padding: 10px 12px; border-radius: 8px;
+          background: #FFF2F1; color: var(--red); font-size: 12px;
+          word-break: break-all; display: none; white-space: pre-wrap; }
+.badge { display: inline-block; padding: 3px 12px; border-radius: 100px;
+         font-size: 12px; font-weight: 600; color: #fff; }
+.badge.pending { background: var(--gray); }
+.badge.running { background: var(--primary); }
+.badge.success { background: var(--green); }
+.badge.failed { background: var(--red); }
+.badge.cancelled { background: var(--orange); }
+.badge.timeout { background: var(--orange); }
+.badge.idle { background: var(--border); color: var(--text-sub); }
+.progress-track { height: 8px; background: var(--bg-sub); border-radius: 100px;
+                  margin-top: 12px; overflow: hidden; }
+.progress-bar { height: 100%; width: 0%; background: var(--primary);
+                border-radius: 100px; transition: width .4s ease; }
+.meta { font-size: 12px; color: var(--text-sub); margin-top: 8px;
+        word-break: break-all; }
+video { width: 100%; border-radius: 12px; background: #000; display: none; }
+details summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+textarea.json { min-height: 140px; font-family: ui-monospace, Consolas, monospace;
+                font-size: 11px; margin-top: 10px; }
+.textitem { border: 1px solid var(--border); border-radius: 8px;
+            padding: 10px; margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>时间轴编辑器</h1>
+  <a href="/app/">← 返回预览页</a>
+  <p>manifest 驱动表单 · 轨道视图 · 提交前本地预检（非法参数在前端拦截）</p>
+</header>
+
+<!-- ① 基本设置 -->
+<section class="card">
+  <h2><span class="no">1</span>基本设置与素材</h2>
+  <div class="grid">
+    <div><label>fps</label><input type="number" id="fps" value="30"></div>
+    <div><label>宽度 px</label><input type="number" id="resW" value="640"></div>
+    <div><label>高度 px</label><input type="number" id="resH" value="360"></div>
+    <div><label>素材时长 s</label><input type="number" id="srcDur" value="5" step="0.5"></div>
+  </div>
+  <label>素材绝对路径（视频+音频同源；先填这里再添加片段）</label>
+  <input type="text" id="srcPath" placeholder="例：E:\media\sample.mp4">
+  <div class="row">
+    <button class="btn" id="addV">+ 视频片段</button>
+    <button class="btn" id="addA">+ 音频片段</button>
+    <button class="btn danger" id="delClip">删除选中片段</button>
+    <button class="btn" id="addText">+ 画面文字</button>
+  </div>
+</section>
+
+<!-- ② 轨道视图 -->
+<section class="card">
+  <h2><span class="no">2</span>轨道视图 <span class="meta" style="margin:0" id="durText"></span></h2>
+  <div class="track-wrap">
+    <div class="track-label">视频轨 v_main</div>
+    <div class="track" id="trackV"></div>
+  </div>
+  <div class="track-wrap">
+    <div class="track-label">音频轨 a_main</div>
+    <div class="track" id="trackA"></div>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <div style="flex:1">
+      <label>转场：加在第 N 个片段与 N+1 之间</label>
+      <select id="trPos"></select>
+    </div>
+    <div style="width:120px">
+      <label>类型</label><select id="trType"></select>
+    </div>
+    <div style="width:110px">
+      <label>时长 s</label><input type="number" id="trDur" value="0.3" step="0.1" min="0.1">
+    </div>
+    <button class="btn" id="addTr">+ 转场</button>
+  </div>
+  <div class="meta" id="trList"></div>
+</section>
+
+<!-- ③ 属性面板 -->
+<section class="card">
+  <h2><span class="no">3</span>片段属性 <span class="meta" style="margin:0" id="selInfo"></span></h2>
+  <div id="panel"><p class="meta">在轨道上点击片段后在此编辑。</p></div>
+</section>
+
+<!-- ④ 画面文字 -->
+<section class="card">
+  <h2><span class="no">4</span>画面文字（texts）</h2>
+  <div id="textList"><p class="meta">暂无。点上方「+ 画面文字」添加。</p></div>
+</section>
+
+<!-- ⑤ 提交 -->
+<section class="card">
+  <h2><span class="no">5</span>预检与提交</h2>
+  <label>webhook_url（可选：任务终态后服务端回调）</label>
+  <input type="text" id="webhookUrl" placeholder="http://…/callback">
+  <div class="row">
+    <button class="btn" id="previewBtn">生成 JSON 预览 + 预检</button>
+    <button class="btn primary" id="submitBtn">预检并提交渲染</button>
+  </div>
+  <div class="errbox" id="checkErr"></div>
+  <details style="margin-top:10px">
+    <summary>timeline JSON 预览</summary>
+    <textarea class="json" id="jsonPreview" readonly></textarea>
+  </details>
+</section>
+
+<!-- ⑥ 状态/结果 -->
+<section class="card">
+  <h2><span class="no">6</span>任务状态与结果</h2>
+  <div>
+    <span class="badge idle" id="badge">未开始</span>
+    <span class="meta" id="taskIdText" style="display:inline"></span>
+  </div>
+  <div class="progress-track"><div class="progress-bar" id="progressBar"></div></div>
+  <div class="meta" id="progressText">progress：—</div>
+  <div class="errbox" id="stateErr"></div>
+  <p class="meta" id="resultEmpty">任务成功后此处显示成片预览与下载。</p>
+  <video id="video" controls></video>
+  <div class="row" id="resultActions" style="display:none">
+    <a class="btn primary" id="dlLink" href="#" download style="text-decoration:none">下载成片</a>
+  </div>
+</section>
+
+<script>
+"use strict";
+/* ================= 状态（单一真相） ================= */
+var state = { clips: [], transitions: [], texts: [], sel: null, textSel: -1 };
+var manifest = null;
+var pollTimer = null;
+var $ = function (id) { return document.getElementById(id); };
+
+/* manifest 拉取失败时的内置兜底（与 registry 同步的最小集） */
+var FALLBACK = {
+  transition_types: ["fade", "cross", "wipe"],
+  videoEffects: [
+    ["grayscale", "simple"], ["sepia", "simple"], ["invert", "simple"],
+    ["mirror", "simple"], ["vflip", "simple"],
+    ["blur", 0, 50, 5], ["brightness", -1, 1, 0.1],
+    ["contrast", 0, 2, 1.5], ["saturation", 0, 2, 1.5],
+    ["fade_in", 0, 60, null], ["fade_out", 0, 60, null]],
+  positions: ["top-left", "top-center", "top-right", "center-left", "center",
+              "center-right", "bottom-left", "bottom-center", "bottom-right"],
+  speedMin: 0.01, speedMax: 1000
+};
+
+fetch("/manifest").then(function (r) { return r.json(); }).then(function (m) {
+  manifest = m;
+  rebuildTransitionTypes();
+}).catch(function () { rebuildTransitionTypes(); });   // 兜底常量
+
+function manifestVideoEffects() {
+  /* 返回 [name, kind] 列表；param/fade 类附 [min,max,default] */
+  var out = [];
+  var src = (manifest && manifest.effects && manifest.effects.video) || null;
+  if (!src) return FALLBACK.videoEffects;
+  Object.keys(src).forEach(function (name) {
+    var s = src[name];
+    if (s.kind === "simple") out.push([name, "simple"]);
+    else {
+      /* param/fade 类统一 params.<name>：取首键的 min/max/default */
+      var keys = s.params ? Object.keys(s.params) : [];
+      if (keys.length) {
+        var p = s.params[keys[0]];
+        out.push([name, p.min, p.max, p.default]);
+      } else out.push([name, "simple"]);
+    }
+  });
+  return out;
+}
+function effectParamName(name) {
+  /* manifest 序列化统一为 params.<name>（blur→radius / fade_in→duration），
+     无顶层 param_name 字段 —— 取 params 的第一个键 */
+  var src = manifest && manifest.effects && manifest.effects.video;
+  var spec = src && src[name];
+  if (spec && spec.params) {
+    var keys = Object.keys(spec.params);
+    if (keys.length) return keys[0];
+  }
+  return "value";
+}
+function rebuildTransitionTypes() {
+  var types = (manifest && manifest.transition_types) || FALLBACK.transition_types;
+  $("trType").innerHTML = types.map(function (t) {
+    return "<option>" + t + "</option>"; }).join("");
+}
+
+/* ================= 片段增删 ================= */
+function uid(p) { return p + "_" + Math.random().toString(36).slice(2, 8); }
+function srcRef() { return $("srcPath").value.trim() || "__替换素材路径__"; }
+function addClip(track) {
+  var d = parseFloat($("srcDur").value) || 5;
+  var start = maxOut();
+  state.clips.push({
+    id: uid(track === "v_main" ? "v" : "a"), track: track,
+    sourceRef: srcRef(), "in": start, out: start + d,
+    sourceIn: 0, sourceOut: d,
+    transform: { x: 0, y: 0, scale: 1.0, rotation: 0, opacity: 1.0, crop: null },
+    effects: [] });
+  renderAll();
+}
+$("addV").onclick = function () { addClip("v_main"); };
+$("addA").onclick = function () { addClip("a_main"); };
+$("delClip").onclick = function () {
+  if (!state.sel) return;
+  state.clips = state.clips.filter(function (c) { return c.id !== state.sel; });
+  state.transitions = state.transitions.filter(function (t) {
+    return t.attachedClips.indexOf(state.sel) < 0; });
+  state.sel = null;
+  renderAll();
+};
+function maxOut() {
+  return state.clips.reduce(function (m, c) { return Math.max(m, c.out); }, 0);
+}
+function findClip(id) {
+  return state.clips.filter(function (c) { return c.id === id; })[0] || null;
+}
+
+/* ================= 轨道渲染（时间条按比例布局） ================= */
+function renderTracks() {
+  var total = Math.max(maxOut(), 1);
+  $("durText").textContent = "总时长 " + maxOut().toFixed(2) + "s";
+  ["v_main", "a_main"].forEach(function (tr) {
+    var el = tr === "v_main" ? $("trackV") : $("trackA");
+    el.innerHTML = "";
+    state.clips.filter(function (c) { return c.track === tr; })
+      .forEach(function (c) {
+        var d = document.createElement("div");
+        d.className = "clipbar " + (tr === "v_main" ? "video" : "audio") +
+                      (c.id === state.sel ? " sel" : "");
+        d.style.left = (c["in"] / total * 100) + "%";
+        d.style.width = Math.max((c.out - c["in"]) / total * 100, 3) + "%";
+        d.textContent = c.id + " " + c["in"].toFixed(1) + "→" + c.out.toFixed(1);
+        d.onclick = function () { state.sel = c.id; renderAll(); };
+        el.appendChild(d);
+      });
+  });
+  /* 转场位置下拉：按 v_main 轨相邻对 */
+  var vs = state.clips.filter(function (c) { return c.track === "v_main"; });
+  var opts = "";
+  for (var i = 0; i + 1 < vs.length; i++)
+    opts += "<option value=\"" + i + "\">" + vs[i].id + " ↔ " +
+            vs[i + 1].id + "</option>";
+  $("trPos").innerHTML = opts || "<option value=\"\">（需 ≥2 个视频片段）</option>";
+  $("trList").textContent = state.transitions.length ?
+    "已有转场：" + state.transitions.map(function (t) {
+      return t.type + "(" + t.attachedClips.join("↔") + " " +
+             t.duration + "s)"; }).join("；") : "";
+}
+$("addTr").onclick = function () {
+  var i = parseInt($("trPos").value, 10);
+  var vs = state.clips.filter(function (c) { return c.track === "v_main"; });
+  if (isNaN(i) || i + 1 >= vs.length) return;
+  var a = vs[i], b = vs[i + 1];
+  var overlap = Math.min(a.out, b.out) - Math.max(a["in"], b["in"]);
+  var dur = Math.min(parseFloat($("trDur").value) || 0.3,
+                     Math.max(overlap, 0.1));
+  state.transitions.push({ id: uid("tr"), type: $("trType").value,
+    duration: dur, attachedClips: [a.id, b.id] });
+  renderAll();
+};
+
+/* ================= 属性面板（manifest 驱动的效果清单） ================= */
+function renderPanel() {
+  var c = findClip(state.sel);
+  $("selInfo").textContent = c ? ("选中 " + c.id + " · " + c.track) : "";
+  if (!c) { $("panel").innerHTML =
+    "<p class=\"meta\">在轨道上点击片段后在此编辑。</p>"; return; }
+  var isV = c.track === "v_main";
+  var html =
+    "<div class=\"grid\">" +
+    numField("in", "时间轴入点 in", c["in"]) +
+    numField("out", "时间轴出点 out", c.out) +
+    numField("sourceIn", "素材入点 sourceIn", c.sourceIn) +
+    numField("sourceOut", "素材出点 sourceOut", c.sourceOut) +
+    "</div>";
+  if (isV) {
+    var t = c.transform || {};
+    html += "<label>transform（x/y 不可为负，超出画布裁边）</label><div class=\"grid\">" +
+      numField("tx", "x 偏移 ≥0", t.x == null ? 0 : t.x) +
+      numField("ty", "y 偏移 ≥0", t.y == null ? 0 : t.y) +
+      numField("trot", "rotation rad", t.rotation == null ? 0 : t.rotation) +
+      numField("topa", "opacity 0~1", t.opacity == null ? 1 : t.opacity) +
+      "</div>";
+    html += "<label>画面效果（effects；勾选生效，带数值的填参数）</label><div class=\"fx\" id=\"fxBox\"></div>" +
+      "<label>变速 rate（0.01~1000，留空 = 原速）</label>" +
+      "<input type=\"number\" id=\"speedRate\" step=\"0.1\" style=\"width:130px\" value=\"" +
+      currentSpeed(c) + "\">";
+  }
+  $("panel").innerHTML = html;
+  bindPanelInputs(c);
+  if (isV) renderEffectChecks(c);
+}
+function numField(id, label, v) {
+  return "<div><label>" + label + "</label>" +
+         "<input type=\"number\" step=\"0.1\" data-pn=\"" + id + "\" value=\"" +
+         (v == null ? "" : v) + "\"></div>";
+}
+function currentSpeed(c) {
+  var s = (c.effects || []).filter(function (e) {
+    return e.effectType === "speed"; })[0];
+  return s ? s.params.rate : "";
+}
+function renderEffectChecks(c) {
+  var box = $("fxBox");
+  box.innerHTML = "";
+  manifestVideoEffects().forEach(function (spec) {
+    var name = spec[0], kind = spec[1];
+    var cur = (c.effects || []).filter(function (e) {
+      return e.effectType === name; })[0];
+    var lab = document.createElement("label");
+    lab.className = "fxitem";
+    var html = "<input type=\"checkbox\" data-fx=\"" + name + "\" " +
+               (cur ? "checked" : "") + ">" + name;
+    if (typeof kind === "number")            // param/fade：数值输入
+      html += "<input type=\"number\" step=\"0.1\" min=\"" + spec[2] +
+              "\" max=\"" + spec[3] + "\" data-fxv=\"" + name + "\" value=\"" +
+              (cur && cur.params ? (cur.params[effectParamName(name)] ??
+                cur.params.value ?? spec[4] ?? "") : "") + "\">";
+    lab.innerHTML = html;
+    box.appendChild(lab);
+  });
+}
+function bindPanelInputs(c) {
+  $("panel").querySelectorAll("input[data-pn]").forEach(function (inp) {
+    inp.onchange = function () {
+      var v = parseFloat(inp.value);
+      var pn = inp.getAttribute("data-pn");
+      if (pn === "in") c["in"] = v;
+      else if (pn === "out") c.out = v;
+      else if (pn === "sourceIn") c.sourceIn = v;
+      else if (pn === "sourceOut") c.sourceOut = v;
+      else if (pn === "tx") c.transform.x = v;
+      else if (pn === "ty") c.transform.y = v;
+      else if (pn === "trot") c.transform.rotation = v;
+      else if (pn === "topa") c.transform.opacity = v;
+      renderTracks();
+    };
+  });
+  var sr = $("panel").querySelector("#speedRate");
+  if (sr) sr.onchange = function () {
+    var v = parseFloat(sr.value);
+    c.effects = (c.effects || []).filter(function (e) {
+      return e.effectType !== "speed"; });
+    if (!isNaN(v) && v > 0)
+      c.effects.push({ effectType: "speed", params: { rate: v } });
+  };
+  $("panel").querySelectorAll("input[data-fx]").forEach(function (cb) {
+    cb.onchange = function () {
+      var name = cb.getAttribute("data-fx");
+      c.effects = (c.effects || []).filter(function (e) {
+        return e.effectType !== name; });
+      if (cb.checked) {
+        var vInput = $("panel").querySelector(
+          "input[data-fxv=\"" + name + "\"]");
+        var params = {};
+        if (vInput && vInput.value !== "")
+          params[effectParamName(name)] = parseFloat(vInput.value);
+        c.effects.push({ effectType: name, params: params });
+      }
+      renderEffectChecks(c);
+    };
+  });
+  $("panel").querySelectorAll("input[data-fxv]").forEach(function (inp) {
+    inp.onchange = function () {
+      var name = inp.getAttribute("data-fxv");
+      var e = (c.effects || []).filter(function (x) {
+        return x.effectType === name; })[0];
+      if (e) { e.params = e.params || {};
+               e.params[effectParamName(name)] = parseFloat(inp.value); }
+    };
+  });
+}
+
+/* ================= 画面文字 ================= */
+$("addText").onclick = function () {
+  state.texts.push({ id: uid("tx"), text: "文字", start: 0, end: 1,
+    position: "bottom-center", margin: 20, size: 24, color: "#FFFFFF" });
+  renderTexts();
+};
+function renderTexts() {
+  var box = $("textList");
+  if (!state.texts.length) {
+    box.innerHTML = "<p class=\"meta\">暂无。点上方「+ 画面文字」添加。</p>";
+    return;
+  }
+  box.innerHTML = "";
+  var positions = (manifest && manifest.add_text &&
+                   manifest.add_text.position &&
+                   manifest.add_text.position.choices) || FALLBACK.positions;
+  state.texts.forEach(function (t, i) {
+    var d = document.createElement("div");
+    d.className = "textitem";
+    d.innerHTML =
+      "<div class=\"grid3\">" +
+      "<div><label>文字</label><input type=\"text\" data-tk=\"text\" value=\"" +
+        t.text.replace(/"/g, "&quot;") + "\"></div>" +
+      "<div><label>start s</label><input type=\"number\" step=\"0.1\" data-tk=\"start\" value=\"" + t.start + "\"></div>" +
+      "<div><label>end s</label><input type=\"number\" step=\"0.1\" data-tk=\"end\" value=\"" + t.end + "\"></div>" +
+      "<div><label>position</label><select data-tk=\"position\">" +
+        positions.map(function (p) {
+          return "<option" + (p === t.position ? " selected" : "") + ">" +
+                 p + "</option>"; }).join("") + "</select></div>" +
+      "<div><label>size 8~512</label><input type=\"number\" data-tk=\"size\" value=\"" + t.size + "\"></div>" +
+      "<div><label>color #RRGGBB</label><input type=\"text\" data-tk=\"color\" value=\"" + t.color + "\"></div>" +
+      "</div><button class=\"btn danger\" data-tdel=\"" + i + "\">删除该文字</button>";
+    box.appendChild(d);
+  });
+  box.querySelectorAll("input[data-tk],select[data-tk]").forEach(function (inp) {
+    inp.onchange = function () {
+      var k = inp.getAttribute("data-tk");
+      var i = [...box.children].indexOf(inp.closest(".textitem"));
+      var v = inp.value;
+      state.texts[i][k] = (k === "start" || k === "end" || k === "size")
+        ? parseFloat(v) : v;
+    };
+  });
+  box.querySelectorAll("button[data-tdel]").forEach(function (b) {
+    b.onclick = function () {
+      state.texts.splice(parseInt(b.getAttribute("data-tdel"), 10), 1);
+      renderTexts();
+    };
+  });
+}
+
+/* ================= 本地预检（非法参数前端拦截） ================= */
+function validate() {
+  var errs = [];
+  if (!state.clips.length) errs.push("· 至少需要一个片段");
+  state.clips.forEach(function (c) {
+    var tag = "片段 " + c.id;
+    if (!c.sourceRef || c.sourceRef.indexOf("__替换") === 0)
+      errs.push("· " + tag + "：素材路径未填写");
+    if (!(c["in"] >= 0) || !(c.out > c["in"]))
+      errs.push("· " + tag + "：需满足 0 ≤ in < out（当前 " +
+                c["in"] + " → " + c.out + "）");
+    if (c.sourceOut < c.sourceIn)
+      errs.push("· " + tag + "：sourceOut 必须 ≥ sourceIn");
+    if (c.track === "v_main") {
+      var t = c.transform || {};
+      /* manifest transform.x/y 明确 min:0 —— 负偏移在此拦截 */
+      if (t.x < 0) errs.push("· " + tag + "：transform.x 不可为负（等尺寸画布内偏移）");
+      if (t.y < 0) errs.push("· " + tag + "：transform.y 不可为负");
+      if (t.opacity != null && (t.opacity < 0 || t.opacity > 1))
+        errs.push("· " + tag + "：opacity 需在 0~1");
+      (c.effects || []).forEach(function (e) {
+        if (e.effectType === "speed") {
+          var r = e.params.rate;
+          if (!(r > 0 && r <= 1000))
+            errs.push("· " + tag + "：speed rate 需在 (0, 1000]，收到 " + r);
+        }
+      });
+    }
+  });
+  var types = (manifest && manifest.transition_types) ||
+              FALLBACK.transition_types;
+  state.transitions.forEach(function (t) {
+    if (types.indexOf(t.type) < 0)
+      errs.push("· 转场 " + t.id + "：类型 " + t.type + " 不受支持");
+    if (!(t.duration > 0))
+      errs.push("· 转场 " + t.id + "：duration 必须 > 0");
+    var a = findClip(t.attachedClips[0]), b = findClip(t.attachedClips[1]);
+    if (a && b) {
+      var overlap = Math.min(a.out, b.out) - Math.max(a["in"], b["in"]);
+      if (t.duration > overlap)
+        errs.push("· 转场 " + t.id + "：duration " + t.duration +
+                  "s 超过相邻片段重叠 " + overlap.toFixed(2) + "s");
+    }
+  });
+  state.texts.forEach(function (t, i) {
+    if (!t.text || !t.text.trim())
+      errs.push("· 文字 " + (i + 1) + "：内容不能为空");
+    if (!(t.start < t.end))
+      errs.push("· 文字 " + (i + 1) + "：需满足 start < end");
+    if (t.size != null && (t.size < 8 || t.size > 512))
+      errs.push("· 文字 " + (i + 1) + "：size 需在 8~512");
+  });
+  return errs;
+}
+
+/* ================= 组装 timeline JSON ================= */
+function buildTimeline() {
+  return {
+    schemaVersion: "1.0.0",
+    fps: parseFloat($("fps").value) || 30,
+    resolution: { w: parseInt($("resW").value, 10) || 640,
+                  h: parseInt($("resH").value, 10) || 360 },
+    duration: maxOut(),
+    tracks: [{ id: "v_main", type: "video" }, { id: "a_main", type: "audio" }],
+    clips: state.clips.map(function (c) {
+      var o = { id: c.id, track: c.track, sourceRef: c.sourceRef,
+                "in": c["in"], out: c.out,
+                sourceIn: c.sourceIn, sourceOut: c.sourceOut,
+                transform: c.transform, effects: c.effects };
+      return o;
+    }),
+    subtitles: [], transitions: state.transitions, texts: state.texts
+  };
+}
+
+/* ================= 预览 / 提交 ================= */
+function doCheck() {
+  var errs = validate();
+  var box = $("checkErr");
+  if (errs.length) {
+    box.textContent = "预检未通过（" + errs.length + " 项）：\n" + errs.join("\n");
+    box.style.display = "block";
+    return null;
+  }
+  box.style.display = "none";
+  var tl = buildTimeline();
+  $("jsonPreview").value = JSON.stringify(tl, null, 2);
+  return tl;
+}
+$("previewBtn").onclick = function () { doCheck(); };
+$("submitBtn").onclick = function () {
+  var tl = doCheck();
+  if (!tl) return;
+  var payload = { timeline: tl, options: {}, user_id: "web-editor" };
+  var wh = $("webhookUrl").value.trim();
+  if (wh) payload.webhook_url = wh;
+  $("submitBtn").disabled = true;
+  var btn = this;
+  fetch("/render", { method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload) })
+    .then(function (r) {
+      if (r.status !== 202) return r.json().then(function (j) {
+        throw new Error("HTTP " + r.status + " " + JSON.stringify(j)); });
+      return r.json();
+    })
+    .then(function (body) { startPolling(body.task_id); })
+    .catch(function (e) {
+      var box = $("checkErr");
+      box.textContent = "提交失败：" + e.message;
+      box.style.display = "block";
+    })
+    .finally(function () { $("submitBtn").disabled = false; });
+};
+
+/* ================= 轮询 / 结果（与预览页同语义） ================= */
+var TERMINAL = { success: 1, failed: 1, cancelled: 1, timeout: 1 };
+var BADGE_TEXT = { pending: "排队中", running: "渲染中", success: "成功",
+  failed: "失败", cancelled: "已取消", timeout: "超时", idle: "未开始" };
+function setBadge(s) {
+  var b = $("badge");
+  b.className = "badge " + s;
+  b.textContent = BADGE_TEXT[s] || s;
+}
+function setProgress(p) {
+  var v = (typeof p === "number") ? Math.round(p * 100) : 0;
+  $("progressBar").style.width = v + "%";
+  $("progressText").textContent =
+    (typeof p === "number") ? ("progress：" + v + "%") : "progress：—";
+}
+function startPolling(taskId) {
+  if (pollTimer) clearInterval(pollTimer);
+  $("taskIdText").textContent = "task_id：" + taskId;
+  $("resultEmpty").style.display = "";
+  $("video").style.display = "none";
+  $("resultActions").style.display = "none";
+  $("stateErr").style.display = "none";
+  function tick() {
+    fetch("/render/" + encodeURIComponent(taskId))
+      .then(function (r) {
+        if (!r.ok) throw new Error("查询失败 HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (body) {
+        setBadge(body.state);
+        setProgress(body.progress);
+        if (body.state === "failed" || body.state === "timeout") {
+          var e = $("stateErr");
+          e.textContent = "error_msg：" + (body.error_msg || "未知错误");
+          e.style.display = "block";
+        }
+        if (TERMINAL[body.state]) {
+          clearInterval(pollTimer); pollTimer = null;
+          if (body.state === "success") {
+            var url = "/render/" + encodeURIComponent(taskId) + "/download";
+            $("resultEmpty").style.display = "none";
+            var v = $("video");
+            v.src = url; v.style.display = "block";
+            $("dlLink").href = url;
+            $("resultActions").style.display = "flex";
+          }
+        }
+      })
+      .catch(function (e2) {
+        clearInterval(pollTimer); pollTimer = null;
+        var e = $("stateErr");
+        e.textContent = "轮询中断：" + e2.message;
+        e.style.display = "block";
+      });
+  }
+  tick();
+  pollTimer = setInterval(tick, 1000);
+}
+
+/* ================= 入口 ================= */
+function renderAll() { renderTracks(); renderPanel(); }
+renderAll();
+</script>
+</body>
+</html>
