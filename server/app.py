@@ -28,10 +28,15 @@ from pydantic import BaseModel, Field
 
 from ai_video_agent.registry import capability_manifest
 
+from .logging import configure_structlog
 from .models import TaskDB, new_task_id, utcnow
 from .state import TaskState
 from .storage import storage_from_env
 from .tasks import configure_runtime, render_video
+
+# 日志初始化（模块级一次）：uvicorn server.app:app 的 API 进程入口；
+# LOG_ENV=prod → JSON，dev（默认）→ 彩色文本
+configure_structlog()
 
 _DEFAULT_ROOT = Path(__file__).resolve().parent / "server_data"
 

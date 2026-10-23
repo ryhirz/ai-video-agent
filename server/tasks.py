@@ -26,10 +26,15 @@ from ai_video_agent.compiler import compile as compile_timeline
 from ai_video_agent.render import render
 from ai_video_agent.timeline import Timeline
 
+from .logging import configure_structlog
 from .models import TaskDB, utcnow
 from .state import TaskState
 from .storage import LocalStorage, Storage, storage_from_env
 from .webhooks import build_payload, fire_webhook
+
+# 日志初始化（模块级一次）：celery -A server.tasks worker 是独立进程，
+# 必须自行初始化（不能依赖 app 进程的配置）
+configure_structlog()
 
 _TIME_LIMIT_SECONDS = 600      # 与 conf.task_time_limit 保持一致
 celery_app = Celery("ai_video_agent")

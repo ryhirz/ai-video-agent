@@ -36,6 +36,7 @@ fastapi>=0.100,<1       # API 层；环境实测 0.141.1（原为 gradio 传递�
 uvicorn>=0.23,<1        # ASGI 服务器；环境实测 0.53.0（原为 gradio 传递依赖）
 sqlalchemy>=2.0,<3      # render_tasks DAL；环境实测 2.1.6
 minio>=7.0,<8           # 对象存储 SDK（第四步 MinIOStorage）；环境实测 7.2.20
+structlog>=24.1,<27     # 结构化日志（dev 彩色 / prod JSON 双模）；环境实测 26.1.0，零运行时依赖
 
 
 # ---------- 测试工具 ----------
